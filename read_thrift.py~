@@ -1,0 +1,31 @@
+from thrift.transport import TSocket, TTransport
+from thrift.protocol import TBinaryProtocol
+from sswitch_CLI import SimpleSwitch
+import time
+
+def read_register_thrift(register_name="MyIngress.test_counter", index=0, port=9090, interval=1):
+    # Thrift接続
+    transport = TSocket.TSocket('127.0.0.1', port)
+    transport = TTransport.TBufferedTransport(transport)
+    protocol = TBinaryProtocol.TBinaryProtocol(transport)
+    client = SimpleSwitch.Client(protocol)
+    transport.open()
+
+    print(f"[*] Connected to Thrift on port {port}")
+
+    try:
+        while True:
+            value=client.register_read(0,register_name,index)
+            print(f"[Register] {register_name}[{index}] = {value}")
+
+            time.sleep(interval)
+
+    except KeyboardInterrupt:
+        print("\n[!] Stopping...")
+    finally:
+        transport.close()
+        print("[*] Disconnected.")
+
+
+if __name__ == "__main__":
+    read_register_thrift()

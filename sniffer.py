@@ -1,0 +1,93 @@
+from scapy.all import sniff, IP, get_if_list
+import os
+import threading
+import time
+import zlib
+import struct
+
+HOST_FILE_PATH = "./tmp/hosts.txt"
+hosts = {}
+REGISTER_SIZE = 1024
+
+def load_hosts():
+    if os.path.exists(HOST_FILE_PATH):
+        with open(HOST_FILE_PATH, 'r') as f:
+            for line in f:
+                try:
+                    h, src, dst = line.strip().split(',')
+                    hosts[int(h)] = (src, dst)
+                except ValueError:
+                    continue
+        print(f"[*] {len(hosts)} 件の通信ペアを復元しました。")
+    else:
+        print("[*] hosts.txt は存在しません。新規作成します。")
+
+def p4_like_crc32(src_ip, dst_ip):
+    # IPヘッダを作成
+    pkt = IP(src=src_ip, dst=dst_ip)
+
+    # P4が参照している部分（srcAddr + dstAddr）をバイト列に変換
+    src_bytes = struct.pack("!I", int.from_bytes(bytes(map(int, pkt.src.split('.'))), 'big'))
+    dst_bytes = struct.pack("!I", int.from_bytes(bytes(map(int, pkt.dst.split('.'))), 'big'))
+    concat_bytes = src_bytes + dst_bytes
+
+    # CRC32計算
+    crc = zlib.crc32(concat_bytes) & 0xffffffff
+    return crc
+
+def sniff_on_interface(iface):
+    print("[*] Sniffer起動中...")
+    sniff(iface=iface, filter = "ip", prn = handle_packet, store = 0)
+
+def process_packet(pkt):
+    if IP in pkt:
+        src = pkt[IP].src
+        dst = pkt[IP].dst
+        key = (src,dst)
+        h = p4_like_crc32(src,dst) % REGISTER_SIZE
+        
+        if h not in hosts:
+            hosts[h] = key
+            # 保存先の作成
+            os.makedirs(os.path.dirname(HOST_FILE_PATH), exist_ok = True)
+
+             # ファイル書き込み処理(追記)
+            with open(HOST_FILE_PATH, "a") as f:  # mode="a"->追記モード
+                f.write(f"{h},{src},{dst}\n")
+
+            print(f"[+] 新規ハッシュ登録: {h} → {src} -> {dst}")
+
+
+
+def main():
+    ifaces = [i for i in get_if_list() if i.startswith("s1-eth")]
+    if not ifaces:
+        print("[!] 監視対象のインタフェースが見つかりません。")
+        return
+
+    print(f"[*] Sniffer 起動中: 監視対象インタフェース = {ifaces}")
+    sniff(filter="ip", prn=process_packet, store=False, iface=ifaces)
+
+    
+'''
+    # IPパケットのみを対象にキャプチャ
+    sniff(filter="ip", prn=process_packet, store=False, iface=ifaces)
+
+    print(f"[*] 対象インタフェース: {interfaces}")
+    for iface in interfaces:
+        t = threading.Thread(target=sniff_on_interface,args=(iface,),daemon=True)
+        t.start()
+
+    try:
+        while True:
+            print(f"[Main] 現在 {len(hosts)} ペア検出済み。稼働中...")
+            time.sleep(5)
+    except KeyboardInterrupt:
+        print("\n[!] 停止しました。")
+'''
+if __name__ == "__main__":
+    load_hosts()
+    main()
+
+    #print("[*] Register監視を開始します...")
+    #register_monitor()

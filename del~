@@ -1,0 +1,11 @@
+#!/bin/bash
+# del: 固定パスの test.txt を削除する
+
+target="/home/p4/tutorials/exercises/count/tmp/test.txt"
+
+if [ ! -e "$target" ]; then
+    echo "ファイルが存在しません: $target"
+    exit 1
+fi
+
+rm -f "$target" && echo "削除しました: $target"
