@@ -48,9 +48,36 @@ def lookup_ip_pair(index):
                     continue
     return None,None
 
+def write_meter_entry(s1,p4info_helper, index):
+    print(f"[*] Setting meter for index={index} (Rate={METER_RATE} pps)")
 
+    meter_entry = p4info_helper.buildMeterEntry(
+        meter_name="MyIngress.my_meter",
+        index=index,
 
-def insert_redirect_rule(src_ip,dst_ip):
+        cir=METER_RATE,
+        cburst=METER_BURST,
+        pir=METER_RATE,
+        pburst=METER_BURST
+    )
+        )
+    # 書き込みリクエスト
+    request = p4runtime_pb2.WriteRequest() # スイッチへのルール書き込みリクエストを作成
+    request.device_id = DEVICE_ID # 対象スイッチを指定
+    request.election_id.low = 1  # コントローラのマスター権限を示す 
+    update = request.updates.add()   # 書き込み操作を追加
+    update.type = p4runtime_pb2.Update.MODIFY # Meterは既に存在するのでMODIFY
+    update.entity.meter_entry.CopyFrom(meter_entry)   #ルール追加操作であることを指定
+
+    try:
+        s1.client_stub.Write(request)
+        print(f"[+] Meter entry updated successfully.")
+    except grpc.RpcError as e:
+        print(f"[!] Meter update failed: {e.details()}")
+
+    
+
+def insert_redirect_rule(src_ip,dst_ip,index):
     #P4に転送ルール追加
     print(f"[*] Redirecting packets from src={src_ip} to h3 ({DST_MAC_h3}, port={DST_PORT_h3})")
     
@@ -73,6 +100,9 @@ def insert_redirect_rule(src_ip,dst_ip):
         print("[!] MasterArbitrationUpdate failed:", e.details())
         ShutdownAllSwitchConnections()
         sys.exit(1)
+
+    #2025/12/03追記 meter処理追加
+    write_meter_entry(s1,p4info_helper,index)
 
           
     table_entry = p4info_helper.buildTableEntry(
@@ -123,7 +153,8 @@ def main():
         print(f"[x] index={index} に対応する通信ペアが hosts.txt に見つかりません。")
         sys.exit(1)
 
-    insert_redirect_rule(src_ip, dst_ip)
+    # 2025/12/03 index も渡すように変更
+    insert_redirect_rule(src_ip, dst_ip,index)
 
     
 

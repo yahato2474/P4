@@ -105,4 +105,4 @@ def packet_level_change_2(pkt):
     
 print(f"SFC server running on {iface} ({my_ip} / {my_mac})")
 # store=0 にすることでメモリ圧迫を防ぐ
-sniff(iface=iface, prn=packet_level_change_2, store=0)
+sniff(iface=iface, prn=packet_level_change_1, store=0)

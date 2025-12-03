@@ -4,6 +4,11 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 
+// 【重要】 色の値を定数として定義 (v1model標準: Green=0, Yellow=1, Red=2)
+const bit<32> METER_GREEN = 0;
+const bit<32> METER_YELLOW = 1;
+const bit<32> METER_RED = 2;
+
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -76,7 +81,7 @@ parser MyParser(packet_in packet,
 }
 
 /*************************************************************************
-************   C H E C K S U M    V E R I F I C A T I O N   *************
+************ C H E C K S U M    V E R I F I C A T I O N   *************
 *************************************************************************/
 
 control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
@@ -85,7 +90,7 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 
 
 /*************************************************************************
-**************  I N G R E S S   P R O C E S S I N G   *******************
+************** I N G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
 control MyIngress(inout headers hdr,
@@ -108,25 +113,30 @@ control MyIngress(inout headers hdr,
     }
 
     action calc_hash(){
-	bit<32> min = 0;
-	bit<32> max = REGISTER_SIZE;
-	hash(
-	    meta.index,
-	    HashAlgorithm.crc32,
-	    min,
-	    {
-		hdr.ipv4.srcAddr,
-		hdr.ipv4.dstAddr
-	    },
-	    max
-	);
+        bit<32> min = 0;
+        bit<32> max = REGISTER_SIZE;
+        hash(
+            meta.index,
+            HashAlgorithm.crc32,
+            min,
+            {
+                hdr.ipv4.srcAddr,
+                hdr.ipv4.dstAddr
+            },
+            max
+        );
  }
 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
-        // hdr.ethernet.srcAddr = hdr.ethernet.dstAddr; test
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+    }
+
+    // 【追加】 メーター実行用のアクション
+    // applyブロック内で直接呼ぶとエラーになる場合があるため、アクションに包む
+    action execute_meter_action() {
+        my_meter.execute_meter(meta.index, meta.meter_tag);
     }
 
 
@@ -149,7 +159,7 @@ control MyIngress(inout headers hdr,
         key = {
             hdr.ipv4.srcAddr: exact;
             hdr.ipv4.dstAddr: exact;
-	        hdr.ipv4.packet_level: exact;
+            hdr.ipv4.packet_level: exact;
         }
         actions = {
             ipv4_forward;
@@ -172,47 +182,44 @@ control MyIngress(inout headers hdr,
 
     apply {
         if (hdr.ipv4.isValid()) {
-            calc_hash();
-            count_table.apply();
+            calc_hash(); //　ハッシュ値計算->meta.idxに保存
+            count_table.apply(); // idxをもとにregisterに登録
 
-	    if(hdr.ipv4.packet_level == 0){
+            if(hdr.ipv4.packet_level == 0){
                 if(redirect_table.apply().hit){
-		    return;
+                    return;
                 }
-	    }
-	    if(hdr.ipv4.packet_level == 1){
+            }
+            if(hdr.ipv4.packet_level == 1){
                 // rate limit
 
-		// メーターを実行 (結果は色として返る)
-		// indexはcalc_hashで計算されたものを使う
-		my_meter.execute.(meta.index, (meta_color_t)meta.meter_tag);
+                execute_meter_action();
 
-		// 赤(RED)ならDrop
-		if(meta.meter_tag == MeterColor.RED){
-		    drop();
-		    return;
-		}
-		// 緑や黄色なら何もしない(通過) -> 下の ipv4_lpm へ
-	    }
+                // 定数 METER_RED (2) と比較
+                if(meta.meter_tag == METER_RED){
+                    drop();
+                    return;
+                }
+                // 緑や黄色なら何もしない(通過) -> 下の ipv4_lpm へ
+            }
 
-	    if(hdr.ipv4.packet_level == 2){
-		// load balance
+            if(hdr.ipv4.packet_level == 2){
+                // load balance
+            }
 
-	    }
-
-	    if(hdr.ipv4.packet_level == 3){
+            if(hdr.ipv4.packet_level == 3){
                 // drop
-		drop();
+                drop();
                 return;
-	    }
+            }
 
-	    ipv4_lpm.apply();
+            ipv4_lpm.apply();
         }
     }
 }
 
 /*************************************************************************
-****************  E G R E S S   P R O C E S S I N G   *******************
+**************** E G R E S S   P R O C E S S I N G   *******************
 *************************************************************************/
 
 control MyEgress(inout headers hdr,
@@ -222,7 +229,7 @@ control MyEgress(inout headers hdr,
 }
 
 /*************************************************************************
-*************   C H E C K S U M    C O M P U T A T I O N   **************
+************* C H E C K S U M    C O M P U T A T I O N   **************
 *************************************************************************/
 
 control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
@@ -232,7 +239,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
             { hdr.ipv4.version,
               hdr.ipv4.ihl,
               hdr.ipv4.diffserv,
-	      hdr.ipv4.packet_level,
+              hdr.ipv4.packet_level,
               hdr.ipv4.totalLen,
               hdr.ipv4.identification,
               hdr.ipv4.flags,
@@ -247,7 +254,7 @@ control MyComputeChecksum(inout headers  hdr, inout metadata meta) {
 }
 
 /*************************************************************************
-***********************  D E P A R S E R  *******************************
+*********************** D E P A R S E R  *******************************
 *************************************************************************/
 
 control MyDeparser(packet_out packet, in headers hdr) {
@@ -258,7 +265,7 @@ control MyDeparser(packet_out packet, in headers hdr) {
 }
 
 /*************************************************************************
-***********************  S W I T C H  *******************************
+*********************** S W I T C H  *******************************
 *************************************************************************/
 
 V1Switch(
