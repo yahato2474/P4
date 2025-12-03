@@ -102,6 +102,48 @@ def packet_level_change_2(pkt):
     pkt.show()# デバッグ用
     
     sendp(new_pkt, iface=iface, verbose=False)
+
+def packet_level_change_3(pkt):
+    # Ethernet層またはIP層がないパケットは無視
+    if Ether not in pkt or IP not in pkt:
+        return
+    
+    # 【修正1】 送信元MACが自分(h3)なら、自分が送出したパケットなので無視
+    if pkt[Ether].src == my_mac:
+        return
+
+    # 自分宛て(h3宛て)のパケットも念のため無視（ARPやPingなど）
+    if pkt[IP].dst == my_ip:
+        return
+
+    ip = pkt[IP].copy()
+
+    # ECN書き換え (下位2bit)
+    now_ecn = ip.tos & 0b11 
+    new_ecn = level_3
+    
+    # 値が変わらないなら送り返さない？（要件次第ですが、とりあえず処理する）
+    
+    ip.tos = (ip.tos & 0b11111100) | new_ecn
+    
+    print(f"[SFC] ECN {bin(now_ecn)} -> {bin(new_ecn)} (Src:{ip.src} -> Dst:{ip.dst})")
+
+    dst_mac = mac_table.get(ip.dst)
+    if dst_mac is None:
+        print(f"[SFC] Mac not found for {ip.dst} -> Ignore")
+        return
+
+    # 【修正3】 チェックサムと長さを削除してScapyに再計算させる
+    del ip.chksum
+    del ip.len
+
+    # 【修正2】 ペイロードを二重につけない
+    # ip オブジェクトの中に既にペイロードが含まれています
+    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip 
+        
+    # 送
+    sendp(new_pkt, iface=iface, verbose=False)
+    print(f"[SFC] → Sent back to s1 (DstMAC={dst_mac})")
     
 print(f"SFC server running on {iface} ({my_ip} / {my_mac})")
 # store=0 にすることでメモリ圧迫を防ぐ
