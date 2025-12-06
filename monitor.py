@@ -4,7 +4,7 @@ import re
 
 # ---- 設定 ----
 INTERVAL = 1               # 監視間隔(秒)
-THRESHOLD = 1             # 閾値
+THRESHOLD = 4             # 閾値
 THRIFT_PORT = 9090         # CLIのポート
 
 # ---- すでにRuntimeを実行したindexを保持 ----
@@ -62,7 +62,7 @@ def main():
                 if idx not in activated_indices:
                     print(f"[!] ALERT: index={idx} value={val} exceeds threshold ({THRESHOLD})")
                     try:
-                        subprocess.run(["python3", "runtime.py", str(idx)], check=True)
+                        subprocess.run(["python3", "runtime_test.py", str(idx)], check=True)
                         activated_indices.add(idx)
                         reset_register()
                     except subprocess.CalledProcessError as e:

@@ -48,6 +48,7 @@ def lookup_ip_pair(index):
                     continue
     return None,None
 
+"""
 def write_meter_entry(s1,p4info_helper, index):
     print(f"[*] Setting meter for index={index} (Rate={METER_RATE} pps)")
 
@@ -60,7 +61,7 @@ def write_meter_entry(s1,p4info_helper, index):
         pir=METER_RATE,
         pburst=METER_BURST
     )
-        )
+
     # 書き込みリクエスト
     request = p4runtime_pb2.WriteRequest() # スイッチへのルール書き込みリクエストを作成
     request.device_id = DEVICE_ID # 対象スイッチを指定
@@ -74,7 +75,7 @@ def write_meter_entry(s1,p4info_helper, index):
         print(f"[+] Meter entry updated successfully.")
     except grpc.RpcError as e:
         print(f"[!] Meter update failed: {e.details()}")
-
+"""
     
 
 def insert_redirect_rule(src_ip,dst_ip,index):
@@ -101,8 +102,7 @@ def insert_redirect_rule(src_ip,dst_ip,index):
         ShutdownAllSwitchConnections()
         sys.exit(1)
 
-    #2025/12/03追記 meter処理追加
-    write_meter_entry(s1,p4info_helper,index)
+
 
           
     table_entry = p4info_helper.buildTableEntry(
@@ -152,9 +152,6 @@ def main():
     if src_ip is None or dst_ip is None:
         print(f"[x] index={index} に対応する通信ペアが hosts.txt に見つかりません。")
         sys.exit(1)
-
-    # 2025/12/03 index も渡すように変更
-    insert_redirect_rule(src_ip, dst_ip,index)
 
     
 

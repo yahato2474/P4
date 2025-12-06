@@ -133,10 +133,12 @@ control MyIngress(inout headers hdr,
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
     }
 
-    // 【追加】 メーター実行用のアクション
-    // applyブロック内で直接呼ぶとエラーになる場合があるため、アクションに包む
-    action execute_meter_action() {
-        my_meter.execute_meter(meta.index, meta.meter_tag);
+
+    action redirect_with_tag(macAddr_t dstAddr, egressSpec_t port, bit<2> level) {
+        standard_metadata.egress_spec = port;
+        hdr.ethernet.dstAddr = dstAddr;
+        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
+        hdr.ipv4.packet_level = level;
     }
 
 
@@ -162,6 +164,7 @@ control MyIngress(inout headers hdr,
             hdr.ipv4.packet_level: exact;
         }
         actions = {
+	    redirect_with_tag;
             ipv4_forward;
             NoAction;
         }
@@ -193,7 +196,7 @@ control MyIngress(inout headers hdr,
             if(hdr.ipv4.packet_level == 1){
                 // rate limit
 
-                execute_meter_action();
+                my_meter.execute_meter(meta.index, meta.meter_tag);
 
                 // 定数 METER_RED (2) と比較
                 if(meta.meter_tag == METER_RED){

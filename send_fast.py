@@ -6,6 +6,7 @@ import random
 from scapy.all import IP, TCP, Ether, get_if_hwaddr, get_if_list, sendp
 
 def get_if():
+    """eth0を含むインターフェースを自動取得"""
     ifs=get_if_list()
     iface=None
     for i in get_if_list():
@@ -18,27 +19,33 @@ def get_if():
     return iface
 
 def main():
-    if len(sys.argv) < 3:
-        print('Usage: python3 send_fast.py <destination_ip> <count> [message]')
+    if len(sys.argv) < 4:
+        print('Usage: python3 send_burst.py <dst_ip> <total_count> <rate_pps> [message]')
+        print('Example: python3 send_burst.py 10.0.6.6 20 10 "Test"')
         exit(1)
 
     dst_ip = sys.argv[1]
-    count = int(sys.argv[2])
-    msg = sys.argv[3] if len(sys.argv) > 3 else "Attack"
+    total_count = int(sys.argv[2])
+    rate_pps = float(sys.argv[3])
+    msg = sys.argv[4] if len(sys.argv) > 4 else "TestPacket"
     
-    # 宛先IPの解決 (ホスト名でもIPでもOK)
+    # 送信間隔 (interval) を計算
+    # 1秒 / rate_pps
+    interval = 1.0 / rate_pps
+
     addr = socket.gethostbyname(dst_ip)
     iface = get_if()
     src_mac = get_if_hwaddr(iface)
 
-    print(f"[*] Sending {count} packets to {addr} on {iface}...")
+    print(f"[*] Target: {addr}")
+    print(f"[*] Total: {total_count} packets")
+    print(f"[*] Rate: {rate_pps} pps (Interval: {interval:.4f}s)")
+    print(f"[*] Estimated Duration: {total_count * interval:.2f}s")
+    print("-" * 40)
 
-    # パケットを事前に作成してしまう (送信時の計算コストを下げるため)
-    # ポート番号だけランダムに変えて、別々のコネクションに見せる
+    # パケット生成
     packets = []
-    for i in range(count):
-        # 宛先MACは 'ff:ff:ff:ff:ff:ff' (Broadcast) または Gateway MAC
-        # Mininet環境ならBroadcastでもスイッチが良しなに処理してくれることが多い
+    for i in range(total_count):
         pkt = Ether(src=src_mac, dst='ff:ff:ff:ff:ff:ff') / \
               IP(dst=addr) / \
               TCP(dport=80, sport=random.randint(1024, 65535)) / \
@@ -47,17 +54,18 @@ def main():
 
     start_time = time.time()
     
-    # まとめて送信！
-    # inter=0.01 とすると 0.01秒間隔 (100pps)
-    # inter=0.001 とすると 0.001秒間隔 (1000pps)
-    # inter=0 にすると全力送信
-    sendp(packets, iface=iface, verbose=False, inter=0.05)
+    # scapyのsendpで inter (interval) を指定して送信
+    # realtime=True にすると、計算上の時間通りに送ろうと努力してくれる
+    sendp(packets, iface=iface, verbose=False, inter=interval, realtime=True)
 
     end_time = time.time()
-    duration = end_time - start_time
-    
-    print(f"[+] Done. Sent {count} packets in {duration:.4f} seconds.")
-    print(f"[+] Average Rate: {count / duration:.2f} pps")
+    actual_duration = end_time - start_time
+    actual_rate = total_count / actual_duration if actual_duration > 0 else 0
+
+    print("-" * 40)
+    print(f"[+] Done.")
+    print(f"[+] Actual Duration: {actual_duration:.4f}s")
+    print(f"[+] Actual Rate: {actual_rate:.2f} pps")
 
 if __name__ == '__main__':
     main()

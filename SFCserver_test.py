@@ -1,17 +1,31 @@
 from scapy.all import *
 import random
+import time
 
 iface = "eth0"
 my_ip = "10.0.3.3"
-my_mac = get_if_hwaddr(iface) # 自分のMACアドレスを取得
+my_mac = get_if_hwaddr(iface)
 
-level_1 = 0b01 # rate limit
-level_2 = 0b10
-level_3 = 0b11
+# レベル定義 (ECNの値)
+LEVEL_NORMAL = 0b01 # 1: Rate Limit (通常転送含む)
+LEVEL_LB     = 0b10 # 2: Load Balance
+LEVEL_DROP   = 0b11 # 3: Drop
 
-# h4,h5
-loadbalance_IP_list=["10.0.4.4","10.0.5.5"]
+# 閾値設定 (5秒間に何パケット来たか)
+THRESHOLD_DROP = 20  # 30パケット以上 -> Level 3 (Drop)
+THRESHOLD_LB   = 10  # 20パケット以上 -> Level 2 (Load Balance)
+THRESHOLD_RL = 5  # 必要なら設定
 
+TIME_WINDOW    = 5.0 # 監視期間(秒)
+
+# パケット到着時刻記録用辞書
+# { "10.0.1.1": [time1, time2, ...], ... }
+packet_history = {}
+
+# ロードバランス先リスト
+LB_TARGETS = ["10.0.4.4", "10.0.5.5"]
+
+# MACアドレステーブル (次のホップの解決用)
 mac_table={
     "10.0.1.1":"08:00:00:00:01:11", 
     "10.0.2.2":"08:00:00:00:02:22",
@@ -21,88 +35,118 @@ mac_table={
     "10.0.6.6":"08:00:00:00:06:66",
 }
 
-def packet_level_change_1(pkt):
-    # Ethernet層またはIP層がないパケットは無視
+def get_mitigation_level(src_ip):
+    """
+    送信元IPごとの直近5秒間のパケット数を計算し、適用すべきレベルを返す
+    """
+    current_time = time.time()
+    
+    # 初めてのIPならリスト初期化
+    if src_ip not in packet_history:
+        packet_history[src_ip] = []
+    
+    # 履歴リストを取得
+    timestamps = packet_history[src_ip]
+    
+    # 1. 掃除: 5秒以上前のタイムスタンプを除去
+    valid_timestamps = [t for t in timestamps if current_time - t <= TIME_WINDOW]
+    
+    # 2. 記録: 現在時刻を追加
+    valid_timestamps.append(current_time)
+    
+    # 辞書を更新
+    packet_history[src_ip] = valid_timestamps
+    
+    # 3. カウント
+    count = len(valid_timestamps)
+    
+    print(f"[Stats] Src:{src_ip} Count(5s): {count}") # デバッグ用
+
+    # 4. 判定ロジック
+    if count >= THRESHOLD_DROP:
+        return LEVEL_DROP, count
+    elif count >= THRESHOLD_LB:
+        return LEVEL_LB, count
+    
+    # それ以外は Level 1 (Rate Limit / Normal)
+    return LEVEL_NORMAL, count
+
+def packet_process(pkt):
+    """
+    パケットを受信し、レベル判定 -> ヘッダ書き換え -> 送信 を一括で行う関数
+    """
+    # 1. フィルタリング (自分発のパケットやIP以外は無視)
     if Ether not in pkt or IP not in pkt:
         return
-    
-    # 【修正1】 送信元MACが自分(h3)なら、自分が送出したパケットなので無視
-    if pkt[Ether].src == my_mac:
+    if pkt[Ether].src == my_mac: # 自分が送信したパケットは無視 (ループ防止)
+        return
+    if pkt[IP].dst == my_ip:     # 自分宛てのパケットは無視
         return
 
-    # 自分宛て(h3宛て)のパケットも念のため無視（ARPやPingなど）
-    if pkt[IP].dst == my_ip:
-        return
-
+    # パケットをコピーして編集開始
     ip = pkt[IP].copy()
-
-    # ECN書き換え (下位2bit)
-    now_ecn = ip.tos & 0b11 
-    new_ecn = level_1
+    src_ip = ip.src
     
-    # 値が変わらないなら送り返さない？（要件次第ですが、とりあえず処理する）
+    # 2. レベル判定
+    level, count = get_mitigation_level(src_ip)
     
-    ip.tos = (ip.tos & 0b11111100) | new_ecn
+    # 3. 共通処理: ECN (TOS下位2bit) の書き換え
+    # 既存のTOSの上位6bitを残しつつ、下位2bitを新しいレベルにする
+    ip.tos = (ip.tos & 0b11111100) | level
     
-    print(f"[SFC] ECN {bin(now_ecn)} -> {bin(new_ecn)} (Src:{ip.src} -> Dst:{ip.dst})")
+    action_msg = ""
 
-    dst_mac = mac_table.get(ip.dst)
-    if dst_mac is None:
-        print(f"[SFC] Mac not found for {ip.dst} -> Ignore")
-        return
-
-    # 【修正3】 チェックサムと長さを削除してScapyに再計算させる
-    del ip.chksum
-    del ip.len
-
-    # 【修正2】 ペイロードを二重につけない
-    # ip オブジェクトの中に既にペイロードが含まれています
-    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip 
+    # 4. レベルごとの分岐処理
+    if level == LEVEL_DROP:
+        # Level 3: Drop
+        # ここでは「Drop対象だよ」というタグ(11)をつけてスイッチに戻す
+        # スイッチ側で ipv4.packet_level==3 を見て drop() する
+        action_msg = f"DROP (Count={count})"
         
-    # 送
-    sendp(new_pkt, iface=iface, verbose=False)
-    print(f"[SFC] → Sent back to s1 (DstMAC={dst_mac})")
+    elif level == LEVEL_LB:
+        # Level 2: Load Balance
+        # 宛先IPをCDNサーバに書き換える
+        original_dst = ip.dst
+        new_dst = random.choice(LB_TARGETS)
+        ip.dst = new_dst
+        action_msg = f"LB {original_dst}->{new_dst} (Count={count})"
+        
+    else: # LEVEL_NORMAL (Level 1)
+        # Level 1: Rate Limit
+        # 宛先は変えずにそのまま戻す (スイッチ側でMeterにかかる)
+        action_msg = f"RateLimit/Fwd (Count={count})"
 
-def packet_level_change_2(pkt):
-    if Ether not in pkt or IP not in pkt:
-        return
-    if pkt[Ether].src == my_mac:
-        return
-    if pkt[IP].dst == my_ip:
-        return
+    print(f"[SFC] {src_ip} -> {action_msg}")
 
-    ip = pkt[IP].copy()
-    # ロードバランス処理
-    # ランダムに振り分け,ハッシュも可
-    new_dst_ip = random.choice(loadbalance_IP_list)
-
-    print(f"[SFC] Load Balancing:{ip.dst} -> {new_dst_ip}")
-    ip.dst=new_dst_ip
-
-    # 必要ないけど一応
-    new_ecn = level_2
-    ip.tos = (ip.tos & 0b11111100) | new_ecn
-
-    # 重要 チェックサム再計算
+    # 5. 送信準備 (チェックサム再計算 & MAC解決)
+    
+    # チェックサム削除 (Scapyに再計算させる)
     del ip.chksum
     del ip.len
-
     if TCP in ip:
         del ip[TCP].chksum
     elif UDP in ip:
         del ip[UDP].chksum
 
+    # 次の宛先MACアドレスを解決
+    # ip.dst が書き換わっている場合(LB時)はその新しいIPに対応するMACを取得
     dst_mac = mac_table.get(ip.dst)
+    
     if dst_mac is None:
-        print(f"[SFC] Mac not found for {ip.dst}")
+        print(f"[SFC] Error: MAC not found for {ip.dst}")
         return
 
-    new_pkt=Ether(dst=dst_mac, src=my_mac) / ip
-
-    pkt.show()# デバッグ用
+    # パケット再構築
+    # SrcMAC=自分(h3), DstMAC=次の宛先
+    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip
     
+    # 送信
     sendp(new_pkt, iface=iface, verbose=False)
-    
-print(f"SFC server running on {iface} ({my_ip} / {my_mac})")
-# store=0 にすることでメモリ圧迫を防ぐ
-sniff(iface=iface, prn=packet_level_change_1, store=0)
+
+# --- Main Process ---
+print(f"[*] SFC Integrated Server running on {iface}")
+print(f"[*] Thresholds (5sec): Drop>={THRESHOLD_DROP}, LB>={THRESHOLD_LB}")
+print("[*] Waiting for packets...")
+
+# prn に統合関数 packet_process を指定
+sniff(iface=iface, prn=packet_process, store=0)
