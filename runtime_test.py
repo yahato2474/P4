@@ -26,8 +26,9 @@ DST_MAC_h3 = "08:00:00:00:03:33"
 DST_PORT_h3 = 3
 
 # Meter設定
-METER_RATE = 5
-METER_BURST = 5
+# この数値以上のパケット検知でdrop
+METER_RATE = 3
+METER_BURST = 3
 
 def lookup_ip_pair(index):
     if not os.path.exists(HOST_FILE_PATH):
@@ -45,7 +46,7 @@ def lookup_ip_pair(index):
                     continue
     return None,None
 
-# ★追加: Helperを使わずに直接MeterEntryを作る関数
+# Helperを使わずに直接MeterEntryを作る関数
 def build_local_meter_entry(p4info_helper, meter_name, index, cir, cburst, pir, pburst):
     meter_entry = p4runtime_pb2.MeterEntry()
     
@@ -71,7 +72,7 @@ def build_local_meter_entry(p4info_helper, meter_name, index, cir, cburst, pir, 
 def write_meter_entry(s1, p4info_helper, index):
     """Level 1用のMeter設定を書き込む"""
     
-    # ★修正: 自作関数を使ってEntryを作成
+    # 修正: 自作関数を使ってEntryを作成
     meter_entry = build_local_meter_entry(
         p4info_helper,
         meter_name="MyIngress.my_meter",
@@ -165,7 +166,7 @@ def insert_redirect_rule(src_ip, dst_ip, index, level):
         match_fields={
             "hdr.ipv4.srcAddr": src_ip,
             "hdr.ipv4.dstAddr": dst_ip,
-            "hdr.ipv4.packet_level": 0
+            "hdr.ipv4.packet_level": 0 #TOS値
         },
         action_name="MyIngress.redirect_with_tag",
         action_params={

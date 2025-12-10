@@ -6,15 +6,15 @@ iface = "eth0"
 my_ip = "10.0.3.3"
 my_mac = get_if_hwaddr(iface)
 
-# レベル定義 (ECNの値)
-LEVEL_NORMAL = 0b01 # 1: Rate Limit (通常転送含む)
+# ECN
+LEVEL_NORMAL = 0b01 # 1: Rate Limit 
 LEVEL_LB     = 0b10 # 2: Load Balance
 LEVEL_DROP   = 0b11 # 3: Drop
 
 # 閾値設定 (5秒間に何パケット来たか)
-THRESHOLD_DROP = 20  # 30パケット以上 -> Level 3 (Drop)
-THRESHOLD_LB   = 10  # 20パケット以上 -> Level 2 (Load Balance)
-THRESHOLD_RL = 5  # 必要なら設定
+THRESHOLD_DROP = 20  # 30パケット以上 -> Drop
+THRESHOLD_LB   = 10  # 20パケット以上 -> Load Balance
+THRESHOLD_RL = 5  
 
 TIME_WINDOW    = 5.0 # 監視期間(秒)
 

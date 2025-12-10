@@ -138,7 +138,7 @@ control MyIngress(inout headers hdr,
         standard_metadata.egress_spec = port;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-        hdr.ipv4.packet_level = level;
+        hdr.ipv4.packet_level = level; //TOS値書き換え
     }
 
 
@@ -193,9 +193,10 @@ control MyIngress(inout headers hdr,
                     return;
                 }
             }
+
             if(hdr.ipv4.packet_level == 1){
                 // rate limit
-
+                // ここを使うためには一旦SFCserverに転送されたパケットの最初の方は、ただTOSを1にしてここに戻すようにする？
                 my_meter.execute_meter(meta.index, meta.meter_tag);
 
                 // 定数 METER_RED (2) と比較
