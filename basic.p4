@@ -164,7 +164,7 @@ control MyIngress(inout headers hdr,
             hdr.ipv4.packet_level: exact;
         }
         actions = {
-	    redirect_with_tag;
+	        redirect_with_tag;
             ipv4_forward;
             NoAction;
         }
@@ -195,8 +195,11 @@ control MyIngress(inout headers hdr,
             }
 
             if(hdr.ipv4.packet_level == 1){
+                // load balance
+            }
+
+            if(hdr.ipv4.packet_level == 2){
                 // rate limit
-                // ここを使うためには一旦SFCserverに転送されたパケットの最初の方は、ただTOSを1にしてここに戻すようにする？
                 my_meter.execute_meter(meta.index, meta.meter_tag);
 
                 // 定数 METER_RED (2) と比較
@@ -207,9 +210,6 @@ control MyIngress(inout headers hdr,
                 // 緑や黄色なら何もしない(通過) -> 下の ipv4_lpm へ
             }
 
-            if(hdr.ipv4.packet_level == 2){
-                // load balance
-            }
 
             if(hdr.ipv4.packet_level == 3){
                 // drop
