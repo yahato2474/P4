@@ -44,7 +44,7 @@ def process_packet(pkt):
         src = pkt[IP].src
         dst = pkt[IP].dst
         key = (src,dst)
-        h = p4_like_crc32(src,dst) % REGISTER_SIZE
+        h = p4_like_crc32(src ,dst) % REGISTER_SIZE
         
         if h not in hosts:
             hosts[h] = key

@@ -1,0 +1,70 @@
+#!/bin/bash
+
+# =================設定=================
+TARGET_IP="10.0.6.6"   # h6 (Server) IP
+DURATION=30          # 1回あたりの秒数
+TRIALS=10            # 試行回数 (5~10推奨)
+OUTPUT_FILE="result_throughput.csv"
+# ======================================
+
+# ファイルの初期化（ヘッダー書き込み）
+echo "Trial,Throughput(Mbps)" > $OUTPUT_FILE
+
+echo "=============================================="
+echo " 測定開始: $TRIALS 回 (1回 $DURATION 秒)"
+echo " Target: $TARGET_IP"
+echo "=============================================="
+
+# 合計値を格納する変数
+total=0
+
+for i in $(seq 1 $TRIALS); do
+    echo -n "Trial $i/$TRIALS: Measuring... "
+    
+    # iperf実行
+    # -t: 時間, -f m: Mbps単位固定, tail -n 1: 最後の行(平均)を取得
+    # awkで数値部分だけを抽出
+    result=$(iperf -c $TARGET_IP -t $DURATION -f m | tail -n 1 | awk '{print $(NF-1)}')
+    
+    # 結果が空でないかチェック
+    if [ -z "$result" ]; then
+        echo "Error: 測定失敗"
+        continue
+    fi
+    
+    echo "$result Mbps"
+    
+    # CSVに追記
+    echo "$i,$result" >> $OUTPUT_FILE
+done
+
+echo "=============================================="
+echo " 測定完了！ データは $OUTPUT_FILE に保存されました"
+echo "=============================================="
+
+# 統計情報の計算 (awkを使用)
+awk -F',' '
+    NR>1 {
+        sum += $2;
+        sumsq += $2^2;
+        n++;
+        data[n] = $2;
+    }
+    END {
+        if (n > 0) {
+            mean = sum / n;
+            stddev = sqrt((sumsq - sum^2/n) / (n - 1));
+            
+            # 95%信頼区間の計算 (t分布の近似として1.96や2.26などを使うが、ここでは簡易的に標準誤差*2程度を表示)
+            stderr = stddev / sqrt(n);
+            ci95 = stderr * 2.262; # 自由度9(n=10)のt値 両側5%
+
+            printf "サンプル数(N): %d\n", n
+            printf "平均値 (Mean): %.2f Mbps\n", mean
+            printf "標準偏差 (SD): %.2f\n", stddev
+            printf "95%%信頼区間 : %.2f ± %.2f Mbps\n", mean, ci95
+        } else {
+            print "データがありません"
+        }
+    }
+' $OUTPUT_FILE

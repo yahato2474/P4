@@ -14,7 +14,6 @@ from p4runtime_lib.helper import P4InfoHelper
 from p4runtime_lib.switch import ShutdownAllSwitchConnections
 from p4.v1 import p4runtime_pb2
 
-
 # 各種設定
 P4INFO_PATH = 'build/basic.p4.p4info.txt'
 BMV2_JSON_PATH = 'build/basic.json'
@@ -26,17 +25,16 @@ HOST_FILE_PATH = "./tmp/hosts.txt"
 DST_MAC_h3 = "08:00:00:00:03:33"
 DST_PORT_h3 = 3
 
-# meter設定
-METER_RATE = 5  # レート,ppsの設定
-METER_BURST = 5 # バースト: 一瞬なら5パケット溜め込んでもOK
+# Meter設定
+# この数値以上のパケット検知でdrop
+METER_RATE = 3
+METER_BURST = 3
 
 def lookup_ip_pair(index):
-    #hosts.txt から index(ハッシュ値)に対応する通信ペア(src, dst)を探す
-    if not os.path.exists(HOST_FILE_PATH):# hosts.txtが無いとき
+    if not os.path.exists(HOST_FILE_PATH):
         print(f"[!] hosts.txt が見つかりません: {HOST_FILE_PATH}")
         return None, None
-
-    with open(HOST_FILE_PATH, 'r')as f:
+    with open(HOST_FILE_PATH, 'r') as f:
         reader = csv.reader(f)
         for row in reader:
             if len(row) == 3:
@@ -48,63 +46,58 @@ def lookup_ip_pair(index):
                     continue
     return None,None
 
-"""
-def write_meter_entry(s1,p4info_helper, index):
-    print(f"[*] Setting meter for index={index} (Rate={METER_RATE} pps)")
+# Helperを使わずに直接MeterEntryを作る関数
+def build_local_meter_entry(p4info_helper, meter_name, index, cir, cburst, pir, pburst):
+    meter_entry = p4runtime_pb2.MeterEntry()
+    
+    # P4InfoからメーターのIDを取得
+    # get_meters_id ではなく get_id("meters", name) が一般的
+    # 環境によってメソッド名が違う可能性があるため、try-exceptで吸収
+    try:
+        meter_id = p4info_helper.get_meters_id(meter_name)
+    except:
+        meter_id = p4info_helper.get_id("meters", meter_name)
+        
+    meter_entry.meter_id = meter_id
+    meter_entry.index.index = index
+    
+    # 設定値を入れる
+    meter_entry.config.cir = cir
+    meter_entry.config.cburst = cburst
+    meter_entry.config.pir = pir
+    meter_entry.config.pburst = pburst
+    
+    return meter_entry
 
-    meter_entry = p4info_helper.buildMeterEntry(
+def write_meter_entry(s1, p4info_helper, index):
+    """Level 1用のMeter設定を書き込む"""
+    
+    # 修正: 自作関数を使ってEntryを作成
+    meter_entry = build_local_meter_entry(
+        p4info_helper,
         meter_name="MyIngress.my_meter",
         index=index,
-
-        cir=METER_RATE,
-        cburst=METER_BURST,
-        pir=METER_RATE,
-        pburst=METER_BURST
+        cir=METER_RATE, cburst=METER_BURST,
+        pir=METER_RATE, pburst=METER_BURST
     )
-
-    # 書き込みリクエスト
-    request = p4runtime_pb2.WriteRequest() # スイッチへのルール書き込みリクエストを作成
-    request.device_id = DEVICE_ID # 対象スイッチを指定
-    request.election_id.low = 1  # コントローラのマスター権限を示す 
-    update = request.updates.add()   # 書き込み操作を追加
-    update.type = p4runtime_pb2.Update.MODIFY # Meterは既に存在するのでMODIFY
-    update.entity.meter_entry.CopyFrom(meter_entry)   #ルール追加操作であることを指定
-
+    
+    request = p4runtime_pb2.WriteRequest()
+    request.device_id = DEVICE_ID
+    request.election_id.low = 1
+    update = request.updates.add()
+    update.type = p4runtime_pb2.Update.MODIFY
+    update.entity.meter_entry.CopyFrom(meter_entry)
+    
     try:
         s1.client_stub.Write(request)
-        print(f"[+] Meter entry updated successfully.")
+        print(f"[+] Meter updated for index={index}")
     except grpc.RpcError as e:
         print(f"[!] Meter update failed: {e.details()}")
-"""
+
+def delete_redirect_rule(s1, p4info_helper, src_ip, dst_ip):
+    """ルール削除用の関数"""
+    print(f"[*] Deleting rule for src={src_ip}")
     
-
-def insert_redirect_rule(src_ip,dst_ip,index):
-    #P4に転送ルール追加
-    print(f"[*] Redirecting packets from src={src_ip} to h3 ({DST_MAC_h3}, port={DST_PORT_h3})")
-    
-    if not os.path.exists(P4INFO_PATH):
-        print(f"[!] p4info file not found: {P4INFO_PATH}")
-        sys.exit(1)
-    p4info_helper = P4InfoHelper(P4INFO_PATH)
-
-    # 接続先スイッチの設定
-    s1 = p4runtime_lib.bmv2.Bmv2SwitchConnection(
-        name='s1',
-        address=SWITCH_ADDRESS,
-        device_id=DEVICE_ID,
-        proto_dump_file='logs/runtime_redirect_to_h3.txt'
-    ) 
-
-    try:
-        s1.MasterArbitrationUpdate()
-    except grpc.RpcError as e:
-        print("[!] MasterArbitrationUpdate failed:", e.details())
-        ShutdownAllSwitchConnections()
-        sys.exit(1)
-
-
-
-          
     table_entry = p4info_helper.buildTableEntry(
         table_name="MyIngress.redirect_table",
         match_fields={
@@ -118,44 +111,111 @@ def insert_redirect_rule(src_ip,dst_ip,index):
             "port": DST_PORT_h3
         }
     )
-    # 書き込みリクエスト
-    request = p4runtime_pb2.WriteRequest() # スイッチへのルール書き込みリクエストを作成
-    request.device_id = DEVICE_ID # 対象スイッチを指定
-    request.election_id.low = 1  # コントローラのマスター権限を示す 
-    update = request.updates.add()   # 書き込み操作を追加
-    update.type = p4runtime_pb2.Update.INSERT 
-    update.entity.table_entry.CopyFrom(table_entry)   #ルール追加操作であることを指定
+    
+    request = p4runtime_pb2.WriteRequest()
+    request.device_id = DEVICE_ID
+    request.election_id.low = 1
+    update = request.updates.add()
+    update.type = p4runtime_pb2.Update.DELETE 
+    update.entity.table_entry.CopyFrom(table_entry)
+    
+    try:
+        s1.client_stub.Write(request)
+        print(f"[+] Rule Deleted successfully.")
+    except grpc.RpcError as e:
+        print(f"[!] Delete failed (maybe already deleted): {e.details()}")
 
+
+def insert_redirect_rule(src_ip, dst_ip, index, level):
+    if not os.path.exists(P4INFO_PATH):
+        print(f"[!] p4info file not found: {P4INFO_PATH}")
+        sys.exit(1)
+    p4info_helper = P4InfoHelper(P4INFO_PATH)
+
+    s1 = p4runtime_lib.bmv2.Bmv2SwitchConnection(
+        name='s1',
+        address=SWITCH_ADDRESS,
+        device_id=DEVICE_ID,
+        proto_dump_file='logs/runtime_redirect.txt'
+    ) 
 
     try:
-        s1.client_stub.Write(request) #  実際にスイッチへ送信
-        print(f"[+] Redirect rule inserted successfully for src={src_ip}, dst={dst_ip}")
+        s1.MasterArbitrationUpdate()
     except grpc.RpcError as e:
-        print("[!] gRPC error:", e.code(), e.details())
+        print("[!] MasterArbitrationUpdate failed:", e.details())
+        ShutdownAllSwitchConnections()
+        sys.exit(1)
+
+    # ★Level 0なら削除処理へ
+    if level == 0:
+        delete_redirect_rule(s1, p4info_helper, src_ip, dst_ip)
+        ShutdownAllSwitchConnections()
+        return
+
+    # --- 以下は追加・更新処理 (Level > 0) ---
+
+    print(f"[*] Redirecting src={src_ip} to SFC (Tag Level={level})")
+
+    # 1. Meter設定 (エラー回避のため自作関数経由)
+    write_meter_entry(s1, p4info_helper, index)
+          
+    # 2. リダイレクトルールの作成
+    table_entry = p4info_helper.buildTableEntry(
+        table_name="MyIngress.redirect_table",
+        match_fields={
+            "hdr.ipv4.srcAddr": src_ip,
+            "hdr.ipv4.dstAddr": dst_ip,
+            "hdr.ipv4.packet_level": 0 #TOS値
+        },
+        action_name="MyIngress.ipv4_forward",
+        action_params={
+            "dstAddr": DST_MAC_h3,
+            "port": DST_PORT_h3
+        }
+    )
+
+    request = p4runtime_pb2.WriteRequest() 
+    request.device_id = DEVICE_ID 
+    request.election_id.low = 1  
+    update = request.updates.add()   
+    
+    # 簡易的にINSERT -> 失敗ならMODIFY
+    update.type = p4runtime_pb2.Update.INSERT 
+    update.entity.table_entry.CopyFrom(table_entry)
+
+    try:
+        s1.client_stub.Write(request) 
+        print(f"[+] Rule Inserted: Level {level}")
+    except grpc.RpcError as e:
+        # INSERT失敗 -> MODIFYへ切り替え
+        request = p4runtime_pb2.WriteRequest() 
+        request.device_id = DEVICE_ID 
+        request.election_id.low = 1
+        update = request.updates.add()
+        update.type = p4runtime_pb2.Update.MODIFY
+        update.entity.table_entry.CopyFrom(table_entry)
+        try:
+            s1.client_stub.Write(request)
+            print(f"[+] Rule Modified: Level {level}")
+        except grpc.RpcError as e2:
+            print("[!] Both Insert/Modify failed:", e2.details())
 
     ShutdownAllSwitchConnections()
-    print("[*] Done.")
 
-
-
-    
 def main():
-    #monitor.pyから実行されるコード -> subprocess.run(["python3", "runtime.py", str(idx)], check=True)
-    if len(sys.argv) < 2:
-        print("Usage: python3 runtime.py <index>")
+    if len(sys.argv) < 3:
+        print("Usage: python3 runtime.py <index> <level>")
         sys.exit(1)
 
-    index = int(sys.argv[1])# str(idx)
-    print(f"[*] Received index = {index}")
+    index = int(sys.argv[1])
+    level = int(sys.argv[2])
 
     src_ip, dst_ip = lookup_ip_pair(index)
-    if src_ip is None or dst_ip is None:
-        print(f"[x] index={index} に対応する通信ペアが hosts.txt に見つかりません。")
+    if src_ip is None:
+        print(f"[x] index={index} not found.")
         sys.exit(1)
 
-    
+    insert_redirect_rule(src_ip, dst_ip, index, level)
 
 if __name__ == "__main__":
     main()
-
-    

@@ -1,0 +1,2 @@
+#!/bin/bash
+iperf -c 10.0.6.6 -t 10 -i 1

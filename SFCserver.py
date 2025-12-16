@@ -1,17 +1,30 @@
 from scapy.all import *
 import random
+import time
 
 iface = "eth0"
 my_ip = "10.0.3.3"
-my_mac = get_if_hwaddr(iface) # 自分のMACアドレスを取得
+my_mac = get_if_hwaddr(iface)
 
-level_1 = 0b01 # rate limit
-level_2 = 0b10
-level_3 = 0b11
+# レベル定義 (ECNの値) - 新しい順序
+LEVEL_LB     = 1 # 01: Load Balance
+LEVEL_RL     = 2 # 10: Rate Limit
+LEVEL_DROP   = 3 # 11: Drop
 
-# h4,h5
-loadbalance_IP_list=["10.0.4.4","10.0.5.5"]
+# 閾値設定 (SFC側での独自判断用)
+# monitor.pyの検知とは別に、SFC側でより詳細な制御を行う
+THRESHOLD_LB   = 0
+THRESHOLD_RL   = 2
+THRESHOLD_DROP = 60
+TIME_WINDOW    = 5.0
 
+# パケット到着履歴 {src_ip: [timestamp, ...]}
+packet_history = {}
+
+# ロードバランス先リスト
+LB_TARGETS = ["10.0.4.4", "10.0.5.5"]
+
+# MACアドレステーブル
 mac_table={
     "10.0.1.1":"08:00:00:00:01:11", 
     "10.0.2.2":"08:00:00:00:02:22",
@@ -21,130 +34,100 @@ mac_table={
     "10.0.6.6":"08:00:00:00:06:66",
 }
 
-def packet_level_change_1(pkt):
-    # Ethernet層またはIP層がないパケットは無視
-    if Ether not in pkt or IP not in pkt:
-        return
+def get_sfc_decision(src_ip):
+    """
+    SFC独自のロジックで適用すべきレベルを決定する
+    """
+    current_time = time.time()
     
-    # 【修正1】 送信元MACが自分(h3)なら、自分が送出したパケットなので無視
-    if pkt[Ether].src == my_mac:
-        return
+    if src_ip not in packet_history:
+        packet_history[src_ip] = []
+    
+    timestamps = packet_history[src_ip]
+    # 古い履歴の削除
+    valid_timestamps = [t for t in timestamps if current_time - t <= TIME_WINDOW]
+    # 新しい履歴の追加
+    valid_timestamps.append(current_time)
+    packet_history[src_ip] = valid_timestamps
+    
+    count = len(valid_timestamps)
+    
+    # 判定ロジック
+    if count >= THRESHOLD_DROP:
+        return LEVEL_DROP, count
+    elif count >= THRESHOLD_RL:
+        return LEVEL_RL, count
+    elif count >= THRESHOLD_LB:
+        return LEVEL_LB, count
+    
+    # 閾値未満でも、ここに転送されてきたということは怪しいので
+    # 最低限の処理（LB）を行うか、または様子見(LB)とする
+    return LEVEL_LB, count
 
-    # 自分宛て(h3宛て)のパケットも念のため無視（ARPやPingなど）
-    if pkt[IP].dst == my_ip:
-        return
+def packet_process(pkt):
+    """
+    SFCサーバがパケットを分析し、タグ付け・加工を行う
+    """
+    # 1. フィルタリング
+    if Ether not in pkt or IP not in pkt: return
+    if pkt[Ether].src == my_mac: return
+    if pkt[IP].dst == my_ip: return
 
     ip = pkt[IP].copy()
-
-    # ECN書き換え (下位2bit)
-    now_ecn = ip.tos & 0b11 
-    new_ecn = level_1
+    src_ip = ip.src
     
-    # 値が変わらないなら送り返さない？（要件次第ですが、とりあえず処理する）
+    # 2. SFCによる自律的なレベル決定
+    # monitor.pyの指示(タグ)に頼らず、自分で判断して書き込む
+    level, count = get_sfc_decision(src_ip)
     
-    ip.tos = (ip.tos & 0b11111100) | new_ecn
+    # 3. ECN (TOS下位2bit) の書き換え
+    # ここでSFCが能動的にタグを付与する！
+    ip.tos = (ip.tos & 0b11111100) | level
     
-    print(f"[SFC] ECN {bin(now_ecn)} -> {bin(new_ecn)} (Src:{ip.src} -> Dst:{ip.dst})")
+    action_msg = ""
 
-    dst_mac = mac_table.get(ip.dst)
-    if dst_mac is None:
-        print(f"[SFC] Mac not found for {ip.dst} -> Ignore")
-        return
-
-    # 【修正3】 チェックサムと長さを削除してScapyに再計算させる
-    del ip.chksum
-    del ip.len
-
-    # 【修正2】 ペイロードを二重につけない
-    # ip オブジェクトの中に既にペイロードが含まれています
-    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip 
+    # 4. レベルごとの処理
+    if level == LEVEL_DROP:
+        action_msg = f"Decision: DROP (Count={count})"
         
-    # 送
-    sendp(new_pkt, iface=iface, verbose=False)
-    print(f"[SFC] → Sent back to s1 (DstMAC={dst_mac})")
+    elif level == LEVEL_RL:
+        """
+        RLでも宛先はLBと同じに
 
-def packet_level_change_2(pkt):
-    if Ether not in pkt or IP not in pkt:
-        return
-    if pkt[Ether].src == my_mac:
-        return
-    if pkt[IP].dst == my_ip:
-        return
-
-    ip = pkt[IP].copy()
-    # ロードバランス処理
-    # ランダムに振り分け,ハッシュも可
-    new_dst_ip = random.choice(loadbalance_IP_list)
-
-    print(f"[SFC] Load Balancing:{ip.dst} -> {new_dst_ip}")
-    ip.dst=new_dst_ip
-
-    # 必要ないけど一応
-    new_ecn = level_2
-    ip.tos = (ip.tos & 0b11111100) | new_ecn
-
-    # 重要 チェックサム再計算
-    del ip.chksum
-    del ip.len
-
-    if TCP in ip:
-        del ip[TCP].chksum
-    elif UDP in ip:
-        del ip[UDP].chksum
-
-    dst_mac = mac_table.get(ip.dst)
-    if dst_mac is None:
-        print(f"[SFC] Mac not found for {ip.dst}")
-        return
-
-    new_pkt=Ether(dst=dst_mac, src=my_mac) / ip
-
-    pkt.show()# デバッグ用
-    
-    sendp(new_pkt, iface=iface, verbose=False)
-
-def packet_level_change_3(pkt):
-    # Ethernet層またはIP層がないパケットは無視
-    if Ether not in pkt or IP not in pkt:
-        return
-    
-    # 【修正1】 送信元MACが自分(h3)なら、自分が送出したパケットなので無視
-    if pkt[Ether].src == my_mac:
-        return
-
-    # 自分宛て(h3宛て)のパケットも念のため無視（ARPやPingなど）
-    if pkt[IP].dst == my_ip:
-        return
-
-    ip = pkt[IP].copy()
-
-    # ECN書き換え (下位2bit)
-    now_ecn = ip.tos & 0b11 
-    new_ecn = level_3
-    
-    # 値が変わらないなら送り返さない？（要件次第ですが、とりあえず処理する）
-    
-    ip.tos = (ip.tos & 0b11111100) | new_ecn
-    
-    print(f"[SFC] ECN {bin(now_ecn)} -> {bin(new_ecn)} (Src:{ip.src} -> Dst:{ip.dst})")
-
-    dst_mac = mac_table.get(ip.dst)
-    if dst_mac is None:
-        print(f"[SFC] Mac not found for {ip.dst} -> Ignore")
-        return
-
-    # 【修正3】 チェックサムと長さを削除してScapyに再計算させる
-    del ip.chksum
-    del ip.len
-
-    # 【修正2】 ペイロードを二重につけない
-    # ip オブジェクトの中に既にペイロードが含まれています
-    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip 
+        """
+        original_dst = ip.dst
+        new_dst = random.choice(LB_TARGETS)
+        ip.dst = new_dst
+        action_msg = f"Decision: RateLimit (Count={count})"
         
-    # 送
+    elif level == LEVEL_LB:
+        original_dst = ip.dst
+        new_dst = random.choice(LB_TARGETS)
+        ip.dst = new_dst
+        action_msg = f"Decision: LB {original_dst}->{new_dst} (Count={count})"
+
+    else:
+        action_msg = "Pass (Level 0/Unknown)"
+
+    print(f"[SFC] Analysis: {src_ip} -> {action_msg}")
+
+    # 5. 送信準備
+    del ip.chksum
+    del ip.len
+    if TCP in ip: del ip[TCP].chksum
+    elif UDP in ip: del ip[UDP].chksum
+
+    dst_mac = mac_table.get(ip.dst)
+    if dst_mac is None:
+        print(f"[SFC] Error: MAC not found for {ip.dst}")
+        return
+
+    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip
     sendp(new_pkt, iface=iface, verbose=False)
-    print(f"[SFC] → Sent back to s1 (DstMAC={dst_mac})")
-    
-print(f"SFC server running on {iface} ({my_ip} / {my_mac})")
-# store=0 にすることでメモリ圧迫を防ぐ
-sniff(iface=iface, prn=packet_level_change_1, store=0)
+
+# --- Main Process ---
+print(f"[*] SFC Intelligent Server running on {iface}")
+print(f"[*] Role: Autonomous Analysis & Action")
+print(f"[*] Thresholds: Drop>={THRESHOLD_DROP}, RL>={THRESHOLD_RL}, LB>={THRESHOLD_LB}")
+
+sniff(iface=iface, prn=packet_process, store=0)

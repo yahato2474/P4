@@ -21,8 +21,8 @@ import os
 
 # ---- 設定 ----
 CHECK_INTERVAL = 1.0       # レジスタを読み取る間隔(秒) - 細かく監視は続ける
-WINDOW_SIZE = 30.0         # 判定を行うウィンドウサイズ(秒)
-THRESHOLD_COUNT = 100      # 30秒間でこのパケット数を超えたらアウト
+WINDOW_SIZE = 15         # 判定を行うウィンドウサイズ(秒)
+THRESHOLD_COUNT = 100      # 15秒間でこのパケット数を超えたらアウト
 
 THRIFT_PORT = 9090
 REGISTER_NAME = "MyIngress.test_counter"
@@ -103,7 +103,7 @@ def main():
                     if not is_active:
                         print(f"[!] Alert: index={idx} exceeded threshold ({diff} > {THRESHOLD_COUNT}) -> Add Rule")
                         try:
-                            # Level 2 (Rate Limit) を適用する例
+                            
                             subprocess.run(["python3", "runtime_test.py", str(idx), "2"], check=True)
                             activated_indices[idx] = True
                         except subprocess.CalledProcessError as e:

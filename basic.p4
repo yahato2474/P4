@@ -120,8 +120,7 @@ control MyIngress(inout headers hdr,
             HashAlgorithm.crc32,
             min,
             {
-                hdr.ipv4.srcAddr,
-                hdr.ipv4.dstAddr
+                hdr.ipv4.srcAddr
             },
             max
         );
@@ -134,13 +133,14 @@ control MyIngress(inout headers hdr,
     }
 
 
+    /*
     action redirect_with_tag(macAddr_t dstAddr, egressSpec_t port, bit<2> level) {
         standard_metadata.egress_spec = port;
         hdr.ethernet.dstAddr = dstAddr;
         hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
         hdr.ipv4.packet_level = level; //TOS値書き換え
     }
-
+    */
 
 
     table ipv4_lpm {
@@ -164,7 +164,6 @@ control MyIngress(inout headers hdr,
             hdr.ipv4.packet_level: exact;
         }
         actions = {
-	        redirect_with_tag;
             ipv4_forward;
             NoAction;
         }
@@ -202,7 +201,7 @@ control MyIngress(inout headers hdr,
                 // rate limit
                 my_meter.execute_meter(meta.index, meta.meter_tag);
 
-                // 定数 METER_RED (2) と比較
+                // 定数 METER_RED と比較
                 if(meta.meter_tag == METER_RED){
                     drop();
                     return;

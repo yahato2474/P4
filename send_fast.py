@@ -68,4 +68,6 @@ def main():
     print(f"[+] Actual Rate: {actual_rate:.2f} pps")
 
 if __name__ == '__main__':
+    # python3 send_burst.py <宛先IP> <総パケット数> <速度(PPS)> [メッセージ]
+    # python3 send_burst.py <宛先IP> 300 30 -> 300個のパケットを、1秒間に30個のペースで送る
     main()

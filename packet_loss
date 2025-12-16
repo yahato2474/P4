@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# =================設定=================
+TARGET_IP="10.0.6.6"   # h6 (Server) IP
+PKT_COUNT=100         # 1回の測定で送るパケット数
+INTERVAL=0.1         # 送信間隔(秒)。0.1秒なら5秒で終わります
+TRIALS=10            # 試行回数 (セット数)
+OUTPUT_FILE="./result/result_loss.csv"
+# ======================================
+
+# ファイル初期化
+echo "Trial,LossRate(%)" > $OUTPUT_FILE
+
+echo "=============================================="
+echo " パケットロス測定開始"
+echo " Target: $TARGET_IP"
+echo " 1セット: $PKT_COUNT パケット x $TRIALS 回"
+echo "=============================================="
+
+for i in $(seq 1 $TRIALS); do
+    echo -n "Trial $i/$TRIALS: Sending pings... "
+    
+    # ping実行
+    # -c:回数, -i:間隔, -q:静音モード(結果だけ表示)
+    # grepとawkで "X% packet loss" の数字部分を抽出
+    
+    # 出力例: "50 packets transmitted, 50 received, 0% packet loss, time 4905ms"
+    loss_rate=$(ping -c $PKT_COUNT -i $INTERVAL -q $TARGET_IP | grep "packet loss" | awk -F', ' '{print $3}' | awk '{print $1}' | tr -d '%')
+    
+    # 抽出失敗時のガード
+    if [ -z "$loss_rate" ]; then
+        echo "Error: 測定失敗"
+        continue
+    fi
+    
+    echo "Loss: $loss_rate %"
+    echo "$i,$loss_rate" >> $OUTPUT_FILE
+done
+
+echo "=============================================="
+echo " 測定完了！ データは $OUTPUT_FILE に保存されました"
+echo "=============================================="
+
+# 統計情報の計算 (awk)
+awk -F',' '
+    NR>1 {
+        sum += $2;
+        sumsq += $2^2;
+        n++;
+        if (min == "" || $2 < min) min = $2;
+        if (max == "" || $2 > max) max = $2;
+    }
+    END {
+        if (n > 0) {
+            mean = sum / n;
+            stddev = sqrt((sumsq - sum^2/n) / (n - 1));
+            
+            # 信頼区間
+            stderr = stddev / sqrt(n);
+            ci95 = stderr * 2.262; 
+
+            printf "サンプル数(N): %d\n", n
+            printf "最小値 (Min) : %.2f %%\n", min
+            printf "最大値 (Max) : %.2f %%\n", max
+            printf "平均値 (Mean): %.2f %%\n", mean
+            printf "標準偏差 (SD): %.2f %%\n", stddev
+            printf "95%%信頼区間  : %.2f ± %.2f %%\n", mean, ci95
+        } else {
+            print "データがありません"
+        }
+    }
+' $OUTPUT_FILE

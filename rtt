@@ -1,0 +1,67 @@
+#!/bin/bash
+
+# =================設定=================
+TARGET_IP="10.0.6.6"   # h6 (Server) IP
+COUNT=50             # パケット数 (30~100回くらいが目安)
+INTERVAL=0.2         # 送信間隔(秒)。0.2秒なら10秒で50回測れます
+OUTPUT_FILE="./result/result_rtt.csv"
+# ======================================
+
+# ファイル初期化
+echo "Sequence,RTT(ms)" > $OUTPUT_FILE
+
+echo "=============================================="
+echo " RTT測定開始: $COUNT パケット (Target: $TARGET_IP)"
+echo "=============================================="
+
+# ping実行
+# -c:回数, -i:間隔
+# grepとawkで "time=xx.x ms" の数値部分だけを抽出
+# 結果を配列などに保持せず、直接ファイルと画面に出力
+
+ping -c $COUNT -i $INTERVAL $TARGET_IP | while read line; do
+    # "time=" を含む行だけ処理
+    if [[ "$line" == *"time="* ]]; then
+        # シーケンス番号(icmp_seq)抽出
+        seq=$(echo "$line" | awk -F'icmp_seq=' '{print $2}' | awk '{print $1}')
+        # RTT抽出
+        rtt=$(echo "$line" | awk -F'time=' '{print $2}' | awk '{print $1}')
+        
+        echo "Seq=$seq: $rtt ms"
+        echo "$seq,$rtt" >> $OUTPUT_FILE
+    fi
+done
+
+echo "=============================================="
+echo " 測定完了！ データは $OUTPUT_FILE に保存されました"
+echo "=============================================="
+
+# 統計情報の計算 (awkを使用)
+awk -F',' '
+    NR>1 {
+        sum += $2;
+        sumsq += $2^2;
+        n++;
+        if (min == "" || $2 < min) min = $2;
+        if (max == "" || $2 > max) max = $2;
+    }
+    END {
+        if (n > 0) {
+            mean = sum / n;
+            stddev = sqrt((sumsq - sum^2/n) / (n - 1));
+            
+            # 信頼区間(簡易)
+            stderr = stddev / sqrt(n);
+            ci95 = stderr * 1.96; 
+
+            printf "サンプル数(N): %d\n", n
+            printf "最小値 (Min) : %.3f ms\n", min
+            printf "最大値 (Max) : %.3f ms\n", max
+            printf "平均値 (Mean): %.3f ms\n", mean
+            printf "標準偏差 (SD): %.3f ms\n", stddev
+            printf "95%%信頼区間  : %.3f ± %.3f ms\n", mean, ci95
+        } else {
+            print "エラー: データが取得できませんでした (Pingが通っていない可能性があります)"
+        }
+    }
+' $OUTPUT_FILE

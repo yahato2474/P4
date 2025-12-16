@@ -12,7 +12,7 @@ REGISTER_NAME = "MyIngress.test_counter"
 
 # ---- 閾値設定 (パケット数/秒 = pps) ----
 # 順序変更: LB -> RL -> Drop
-THRESHOLD_L1_LB   = 1  # Level 1: Load Balance (分散)
+THRESHOLD_L1_LB   = 10  # Level 1: Load Balance (分散)
 THRESHOLD_L2_RL   = 40  # Level 2: Rate Limit (制限)
 THRESHOLD_L3_DROP = 60  # Level 3: Drop (遮断)
 

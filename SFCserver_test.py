@@ -12,7 +12,7 @@ LEVEL_RL     = 2 # 10: Rate Limit
 LEVEL_DROP   = 3 # 11: Drop
 
 # 閾値設定 (SFC側での独自判断用)
-# monitor.pyの検知閾値とは別に、SFC側でより詳細な制御を行う
+# monitor.pyの検知とは別に、SFC側でより詳細な制御を行う
 THRESHOLD_LB   = 1
 THRESHOLD_RL   = 40
 THRESHOLD_DROP = 60
@@ -66,7 +66,7 @@ def get_sfc_decision(src_ip):
 
 def packet_process(pkt):
     """
-    SFCサーバが自律的にパケットを分析し、タグ付け・加工を行う
+    SFCサーバがパケットを分析し、タグ付け・加工を行う
     """
     # 1. フィルタリング
     if Ether not in pkt or IP not in pkt: return
