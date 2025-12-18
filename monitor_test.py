@@ -21,7 +21,7 @@ THRESHOLD_L3_DROP = 60  # Level 3: Drop (遮断)
 # level 0: ルールなし(通常)
 # level 1: LB (Load Balance)
 # level 2: RL (Rate Limit)
-# level 3: Drop
+# level 3:Drop
 current_levels = {}
 # 前回のカウント値 (差分計算用)
 last_counts = {}

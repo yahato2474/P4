@@ -5,7 +5,7 @@ TARGET_IP="10.0.6.6"   # h6 (Server) IP
 PKT_COUNT=100         # 1回の測定で送るパケット数
 INTERVAL=0.1         # 送信間隔(秒)。0.1秒なら5秒で終わります
 TRIALS=10            # 試行回数 (セット数)
-OUTPUT_FILE="./result/result_loss.csv"
+OUTPUT_FILE="./result/result_test2_loss.csv"
 # ======================================
 
 # ファイル初期化

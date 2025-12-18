@@ -56,7 +56,15 @@ def main():
     
     # scapyのsendpで inter (interval) を指定して送信
     # realtime=True にすると、計算上の時間通りに送ろうと努力してくれる
-    sendp(packets, iface=iface, verbose=False, inter=interval, realtime=True)
+    print(f"[*] Starting Infinite Attack... Press Ctrl+C to stop.")
+    start_time = time.time()
+    
+    try:
+        # inter=interval で指定した間隔で、loop=1 で無限に送り続ける
+        sendp(packets, iface=iface, verbose=False, inter=interval, realtime=True, loop=1)
+        print("one loop Done\n")
+    except KeyboardInterrupt:
+        print("\n[!] Attack stopped.")
 
     end_time = time.time()
     actual_duration = end_time - start_time
