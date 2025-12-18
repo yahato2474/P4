@@ -133,16 +133,6 @@ control MyIngress(inout headers hdr,
     }
 
 
-    /*
-    action redirect_with_tag(macAddr_t dstAddr, egressSpec_t port, bit<2> level) {
-        standard_metadata.egress_spec = port;
-        hdr.ethernet.dstAddr = dstAddr;
-        hdr.ipv4.ttl = hdr.ipv4.ttl - 1;
-        hdr.ipv4.packet_level = level; //TOS値書き換え
-    }
-    */
-
-
     table ipv4_lpm {
         key = {
             hdr.ipv4.dstAddr: lpm;
@@ -184,9 +174,11 @@ control MyIngress(inout headers hdr,
 
     apply {
         if (hdr.ipv4.isValid()) {
+            calc_hash(); //　ハッシュ値計算->meta.idxに保存
+            count_table.apply(); // idxをもとにregisterに登録            
+            
             if(hdr.ipv4.packet_level == 0){
-                calc_hash(); //　ハッシュ値計算->meta.idxに保存
-                count_table.apply(); // idxをもとにregisterに登録
+
                 if(redirect_table.apply().hit){
                     return;
                 }

@@ -1,6 +1,7 @@
 import subprocess
 import time
 import re
+import zlib
 
 # ---- 設定 ----
 INTERVAL = 1             # 監視間隔
@@ -9,8 +10,12 @@ REGISTER_NAME = "MyIngress.test_counter"
 AVG_PKT_BYTES = 1500       # 1パケットあたりのバイト数
 BITS_PER_BYTE = 8
 
+# ★ここにSFCのIPを書くだけでOK (マジックナンバー 257 は排除)
+SFC_SERVER_IP = "10.0.3.3"
+REGISTER_SIZE = 1024  # P4の定義に合わせる
+
 # ---- 閾値設定 (Mbps) ----
-THRESHOLD_MBPS = 11.0
+THRESHOLD_MBPS = 12.0
 
 current_level = 0
 last_reset_time = time.time() # 最後にリセットした時刻
@@ -39,8 +44,26 @@ def reset_register():
     """値を0にリセットする"""
     execute_cli(f"register_reset {REGISTER_NAME}")
 
+    # ==== ★追加: P4と同じロジックでハッシュ(Index)を計算する関数 ====
+def calculate_p4_index(ip_str):
+    try:
+        # IP文字列(10.0.3.3)をバイナリ(Big-Endian 4bytes)に変換
+        # sniffer_test.py のロジックをScapyなしで再現
+        packed_bytes = bytes(map(int, ip_str.split('.')))
+        
+        # CRC32計算
+        crc = zlib.crc32(packed_bytes) & 0xffffffff
+        
+        # レジスタサイズで割った余りが Index
+        return crc % REGISTER_SIZE
+    except Exception as e:
+        print(f"[!] Hash calculation failed for {ip_str}: {e}")
+        return -1
+
 def main():
     global last_reset_time, current_level
+
+    sfc_index = calculate_p4_index(SFC_SERVER_IP)
 
     print("[*] Register monitor started (Read-and-Reset Mode).")
     print(f"[*] Interval: {INTERVAL}s")
@@ -77,6 +100,15 @@ def main():
         # (今回はリセットするので、0以外の値が入っている＝この1秒間にパケットが来たということ)
         for idx, packet_count in current_counts.items():
             
+
+            # ==== ★追加: SFCのIndexなら計算も判定もスキップして次へ ====
+            if idx == sfc_index:
+                # 必要ならログ出す（デバッグ用)
+                print(f"[*] Ignoring SFC Server traffic (Index={idx})")
+                continue
+            # ========================================================
+
+
             # 計算: (パケット数 / 経過時間) * サイズ * 8ビット / 1M
             pps = packet_count / time_delta
             mbps = (pps * AVG_PKT_BYTES * BITS_PER_BYTE) / 1_000_000.0

@@ -74,10 +74,10 @@ def get_decision(src_ip, pkt_len):
     total_bytes = sum(size for t, size in valid_data)
     mbps = (total_bytes * 8) / TIME_WINDOW / 1_000_000.0
     
-    if mbps >= THRESHOLD_DROP_MBPS: return LEVEL_RL, mbps
+    if mbps >= THRESHOLD_DROP_MBPS: return LEVEL_DROP, mbps
     if mbps >= THRESHOLD_RL_MBPS: return LEVEL_RL, mbps
-    if mbps >= THRESHOLD_LB_MBPS: return LEVEL_RL, mbps
-    return LEVEL_RL, mbps
+    if mbps >= THRESHOLD_LB_MBPS: return LEVEL_LB, mbps
+    return LEVEL_LB, mbps
 
 # ==========================================
 # メイン処理
@@ -140,12 +140,14 @@ def main():
             target_ip_bytes = socket.inet_aton(target_ip_str)
             mutable_pkt[14+16 : 14+20] = target_ip_bytes
 
-            # 3. ★送信元IP書き換え (SNAT: h1 -> h3)
+            # 3. ★送信元IP書き換え (SNAT: h
+            # 1 -> h3)
             # これでスイッチからは h3 からのパケットに見える
-            """
+            """SNAT: h1 -> h3"""
+            
             new_src_ip_bytes = socket.inet_aton(MY_IP)
             mutable_pkt[14+12 : 14+16] = new_src_ip_bytes
-            """
+            
 
             # 4. IPチェックサム再計算
             mutable_pkt[14+10] = 0

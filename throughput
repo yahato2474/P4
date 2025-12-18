@@ -4,7 +4,7 @@
 TARGET_IP="10.0.6.6"   # h6 (Server) IP
 DURATION=30          # 1回あたりの秒数
 TRIALS=10            # 試行回数 (5~10推奨)
-OUTPUT_FILE="./result/result_test2_throughput.csv"
+OUTPUT_FILE="./result/result_test3_throughput.csv"
 # ======================================
 
 # ファイルの初期化（ヘッダー書き込み）

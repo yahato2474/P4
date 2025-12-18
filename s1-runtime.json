@@ -85,6 +85,14 @@
     },
       "action_name":"MyIngress.count_packet",
       "action_params":{}
+    },
+    {
+      "table":"MyIngress.count_table",
+      "match":{
+      "hdr.ipv4.srcAddr": "10.0.3.3"
+    },
+      "action_name":"MyIngress.count_packet",
+      "action_params":{}
     }
   ]
 }
