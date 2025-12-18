@@ -184,10 +184,9 @@ control MyIngress(inout headers hdr,
 
     apply {
         if (hdr.ipv4.isValid()) {
-            calc_hash(); //　ハッシュ値計算->meta.idxに保存
-            count_table.apply(); // idxをもとにregisterに登録
-
             if(hdr.ipv4.packet_level == 0){
+                calc_hash(); //　ハッシュ値計算->meta.idxに保存
+                count_table.apply(); // idxをもとにregisterに登録
                 if(redirect_table.apply().hit){
                     return;
                 }

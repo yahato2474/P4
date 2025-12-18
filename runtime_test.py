@@ -26,8 +26,8 @@ DST_MAC_h3 = "08:00:00:00:03:33"
 DST_PORT_h3 = 3
 
 # Meter設定
-METER_RATE = 5
-METER_BURST = 5
+METER_RATE = 1
+METER_BURST = 1
 
 def lookup_ip_pair(index):
     if not os.path.exists(HOST_FILE_PATH):

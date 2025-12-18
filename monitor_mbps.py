@@ -3,14 +3,14 @@ import time
 import re
 
 # ---- 設定 ----
-INTERVAL = 1             # 監視間隔を3秒に変更 (安定化のため)
+INTERVAL = 1             # 監視間隔
 THRIFT_PORT = 9090         
 REGISTER_NAME = "MyIngress.test_counter"
 AVG_PKT_BYTES = 1500       # 1パケットあたりのバイト数
 BITS_PER_BYTE = 8
 
 # ---- 閾値設定 (Mbps) ----
-THRESHOLD_MBPS = 60.0
+THRESHOLD_MBPS = 11.0
 
 current_level = 0
 last_reset_time = time.time() # 最後にリセットした時刻
@@ -74,7 +74,7 @@ def main():
         if time_delta < 0.1: continue # エラー防止
 
         # 全インデックスをチェック
-        # (今回はリセットするので、0以外の値が入っている＝この3秒間にパケットが来たということ)
+        # (今回はリセットするので、0以外の値が入っている＝この1秒間にパケットが来たということ)
         for idx, packet_count in current_counts.items():
             
             # 計算: (パケット数 / 経過時間) * サイズ * 8ビット / 1M
@@ -82,7 +82,7 @@ def main():
             mbps = (pps * AVG_PKT_BYTES * BITS_PER_BYTE) / 1_000_000.0
 
             # ログ表示
-            if mbps > 1.0:
+            if mbps > 0:
                 print(f"[.] Index={idx}: {mbps:.2f} Mbps (pps={pps:.1f}, time={time_delta:.2f}s)")
 
             # ---- 判定ロジック ----

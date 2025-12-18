@@ -1,123 +1,184 @@
-from scapy.all import *
-import random
+import socket
+import struct
 import time
+import random
 
-iface = "eth0"
-my_ip = "10.0.3.3"
-my_mac = get_if_hwaddr(iface)
+# ==========================================
+# 設定エリア
+# ==========================================
+IFACE = "eth0"
+MY_IP = "10.0.3.3"
+MY_MAC_STR = "08:00:00:00:03:33"
 
-# レベル定義 (ECNの値) - 新しい順序
-LEVEL_LB     = 1 # 01: Load Balance
-LEVEL_RL     = 2 # 10: Rate Limit
-LEVEL_DROP   = 3 # 11: Drop
+# 閾値 (Mbps)
+THRESHOLD_LB_MBPS   = 12.0
+THRESHOLD_RL_MBPS   = 15.0
+THRESHOLD_DROP_MBPS = 18.0
 
-# 閾値設定 (SFC側での独自判断用)
-# monitor.pyの検知とは別に、SFC側でより詳細な制御を行う
-THRESHOLD_LB   = 1
-THRESHOLD_RL   = 40
-THRESHOLD_DROP = 60
-TIME_WINDOW    = 5.0
+TIME_WINDOW = 1.0
 
-# パケット到着履歴 {src_ip: [timestamp, ...]}
+# レベル定義 (TOSの下位2bit)
+LEVEL_LB   = 1 # 01
+LEVEL_RL   = 2 # 10
+LEVEL_DROP = 3 # 11
+
+# ロードバランス先
+LB_TARGET_IPS = ["10.0.4.4", "10.0.5.5"]
+
+# ==========================================
+# 内部変数・ヘルパー関数
+# ==========================================
 packet_history = {}
+level_history = {}
 
-# ロードバランス先リスト
-LB_TARGETS = ["10.0.4.4", "10.0.5.5"]
+def mac_to_bytes(mac_str):
+    """ MACアドレス文字列(xx:xx:...)をバイナリ変換 """
+    return bytes(int(b, 16) for b in mac_str.split(":"))
 
-# MACアドレステーブル
-mac_table={
-    "10.0.1.1":"08:00:00:00:01:11", 
-    "10.0.2.2":"08:00:00:00:02:22",
-    "10.0.3.3":"08:00:00:00:03:33", 
-    "10.0.4.4":"08:00:00:00:04:44",
-    "10.0.5.5":"08:00:00:00:05:55",
-    "10.0.6.6":"08:00:00:00:06:66",
+# MACアドレステーブル (宛先IP -> Next Hop MAC)
+mac_table_bytes = {
+    "10.0.1.1": mac_to_bytes("08:00:00:00:01:11"),
+    "10.0.2.2": mac_to_bytes("08:00:00:00:02:22"),
+    "10.0.3.3": mac_to_bytes("08:00:00:00:03:33"),
+    "10.0.4.4": mac_to_bytes("08:00:00:00:04:44"),
+    "10.0.5.5": mac_to_bytes("08:00:00:00:05:55"),
+    "10.0.6.6": mac_to_bytes("08:00:00:00:06:66"),
 }
 
-def get_sfc_decision(src_ip):
-    """
-    SFC独自のロジックで適用すべきレベルを決定する
-    """
+my_mac_bytes = mac_to_bytes(MY_MAC_STR)
+
+def checksum(msg):
+    """ IPチェックサム計算用 """
+    s = 0
+    for i in range(0, len(msg), 2):
+        w = (msg[i] << 8) + msg[i+1]
+        s = s + w
+    s = (s >> 16) + (s & 0xffff)
+    s = s + (s >> 16)
+    s = ~s & 0xffff
+    return s
+
+def get_decision(src_ip, pkt_len):
+    """ Mbpsを計算して判定レベルを返す """
     current_time = time.time()
-    
     if src_ip not in packet_history:
         packet_history[src_ip] = []
     
-    timestamps = packet_history[src_ip]
-    # 古い履歴の削除
-    valid_timestamps = [t for t in timestamps if current_time - t <= TIME_WINDOW]
-    # 新しい履歴の追加
-    valid_timestamps.append(current_time)
-    packet_history[src_ip] = valid_timestamps
+    # 履歴更新 (1秒以内のデータのみ残す)
+    history = packet_history[src_ip]
+    valid_data = [(t, size) for t, size in history if current_time - t <= TIME_WINDOW]
+    valid_data.append((current_time, pkt_len))
+    packet_history[src_ip] = valid_data
     
-    count = len(valid_timestamps)
+    # Mbps計算
+    total_bytes = sum(size for t, size in valid_data)
+    mbps = (total_bytes * 8) / TIME_WINDOW / 1_000_000.0
     
-    # 判定ロジック
-    if count >= THRESHOLD_DROP:
-        return LEVEL_DROP, count
-    elif count >= THRESHOLD_RL:
-        return LEVEL_RL, count
-    elif count >= THRESHOLD_LB:
-        return LEVEL_LB, count
+    if mbps >= THRESHOLD_DROP_MBPS: return LEVEL_RL, mbps
+    if mbps >= THRESHOLD_RL_MBPS: return LEVEL_RL, mbps
+    if mbps >= THRESHOLD_LB_MBPS: return LEVEL_RL, mbps
+    return LEVEL_RL, mbps
+
+# ==========================================
+# メイン処理
+# ==========================================
+def main():
+    print(f"[*] Raw Socket SFC Server Started on {IFACE}")
+    print(f"[*] Mode: SNAT Enabled (Src IP -> {MY_IP})")
+    print(f"[*] Thresholds: LB={THRESHOLD_LB_MBPS}M, RL={THRESHOLD_RL_MBPS}M, DROP={THRESHOLD_DROP_MBPS}M")
     
-    # 閾値未満でも、ここに転送されてきたということは怪しいので
-    # 最低限の処理（LB）を行うか、または様子見(LB)とする
-    return LEVEL_LB, count
-
-def packet_process(pkt):
-    """
-    SFCサーバがパケットを分析し、タグ付け・加工を行う
-    """
-    # 1. フィルタリング
-    if Ether not in pkt or IP not in pkt: return
-    if pkt[Ether].src == my_mac: return
-    if pkt[IP].dst == my_ip: return
-
-    ip = pkt[IP].copy()
-    src_ip = ip.src
-    
-    # 2. SFCによる自律的なレベル決定
-    # monitor.pyの指示(タグ)に頼らず、自分で判断して書き込む
-    level, count = get_sfc_decision(src_ip)
-    
-    # 3. ECN (TOS下位2bit) の書き換え
-    # ここでSFCが能動的にタグを付与する！
-    ip.tos = (ip.tos & 0b11111100) | level
-    
-    action_msg = ""
-
-    # 4. レベルごとの処理
-    if level == LEVEL_DROP:
-        action_msg = f"Decision: DROP (Count={count})"
-        
-    elif level == LEVEL_RL:
-        action_msg = f"Decision: RateLimit (Count={count})"
-        
-    elif level == LEVEL_LB:
-        original_dst = ip.dst
-        new_dst = random.choice(LB_TARGETS)
-        ip.dst = new_dst
-        action_msg = f"Decision: LB {original_dst}->{new_dst} (Count={count})"
-
-    print(f"[SFC] Analysis: {src_ip} -> {action_msg}")
-
-    # 5. 送信準備
-    del ip.chksum
-    del ip.len
-    if TCP in ip: del ip[TCP].chksum
-    elif UDP in ip: del ip[UDP].chksum
-
-    dst_mac = mac_table.get(ip.dst)
-    if dst_mac is None:
-        print(f"[SFC] Error: MAC not found for {ip.dst}")
+    # Raw Socket作成
+    try:
+        raw_sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
+        raw_sock.bind((IFACE, 0))
+    except PermissionError:
+        print("[!] Error: Root権限(sudo)で実行してください")
         return
 
-    new_pkt = Ether(dst=dst_mac, src=my_mac) / ip
-    sendp(new_pkt, iface=iface, verbose=False)
+    while True:
+        try:
+            # パケット受信
+            packet, _ = raw_sock.recvfrom(2048)
+            
+            # --- 解析 ---
+            eth_type = struct.unpack("!H", packet[12:14])[0]
+            if eth_type != 0x0800: continue # IPv4以外無視
 
-# --- Main Process ---
-print(f"[*] SFC Intelligent Server running on {iface}")
-print(f"[*] Role: Autonomous Analysis & Action")
-print(f"[*] Thresholds: Drop>={THRESHOLD_DROP}, RL>={THRESHOLD_RL}, LB>={THRESHOLD_LB}")
+            ip_header_start = 14
+            
+            # Src/Dst IP 取得
+            src_ip_bytes = packet[ip_header_start+12 : ip_header_start+16]
+            dst_ip_bytes = packet[ip_header_start+16 : ip_header_start+20]
+            src_ip_str = socket.inet_ntoa(src_ip_bytes)
+            dst_ip_str = socket.inet_ntoa(dst_ip_bytes)
 
-sniff(iface=iface, prn=packet_process, store=0)
+            # ループ防止 (自分宛て or 自分が送信元)
+            if dst_ip_str == MY_IP: continue
+            if packet[6:12] == my_mac_bytes: continue
+
+            # --- 判定 ---
+            level, mbps = get_decision(src_ip_str, len(packet))
+
+            # ログ (変化時のみ)
+            last_lvl = level_history.get(src_ip_str, -1)
+            target_ip_str = random.choice(LB_TARGET_IPS)
+            
+            if level != last_lvl:
+                lvl_name = ["?", "LB", "RL", "DROP"][level]
+                print(f"[!] {src_ip_str} -> {lvl_name} ({mbps:.2f} Mbps) >>> Redirect to {target_ip_str} (as {MY_IP})")
+                level_history[src_ip_str] = level
+
+            # --- パケット書き換え (Modifying) ---
+            mutable_pkt = bytearray(packet)
+
+            # 1. TOS書き換え (offset 15)
+            old_tos = mutable_pkt[14+1]
+            new_tos = (old_tos & 0b11111100) | level
+            mutable_pkt[14+1] = new_tos
+
+            # 2. 宛先IP書き換え (LB処理)
+            target_ip_bytes = socket.inet_aton(target_ip_str)
+            mutable_pkt[14+16 : 14+20] = target_ip_bytes
+
+            # 3. ★送信元IP書き換え (SNAT: h1 -> h3)
+            # これでスイッチからは h3 からのパケットに見える
+            """
+            new_src_ip_bytes = socket.inet_aton(MY_IP)
+            mutable_pkt[14+12 : 14+16] = new_src_ip_bytes
+            """
+
+            # 4. IPチェックサム再計算
+            mutable_pkt[14+10] = 0
+            mutable_pkt[14+11] = 0
+            
+            ihl = (mutable_pkt[14] & 0x0f) * 4
+            ip_header = mutable_pkt[14 : 14+ihl]
+            
+            new_csum = checksum(ip_header)
+            mutable_pkt[14+10] = (new_csum >> 8) & 0xff
+            mutable_pkt[14+11] = new_csum & 0xff
+
+            # 5. UDPチェックサム無効化 (必須)
+            protocol = mutable_pkt[14+9]
+            if protocol == 17: # UDP
+                udp_base = 14 + ihl
+                mutable_pkt[udp_base+6] = 0
+                mutable_pkt[udp_base+7] = 0
+
+            # 6. Ethernetヘッダ書き換え
+            next_hop_mac = mac_table_bytes.get(target_ip_str)
+            if next_hop_mac:
+                mutable_pkt[0:6] = next_hop_mac  # Dst MAC
+                mutable_pkt[6:12] = my_mac_bytes # Src MAC
+
+            # --- 送信 ---
+            raw_sock.send(mutable_pkt)
+
+        except KeyboardInterrupt:
+            print("\n[*] Stopping SFC Server...")
+            break
+        except Exception as e:
+            continue
+
+if __name__ == "__main__":
+    main()
