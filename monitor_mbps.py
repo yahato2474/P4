@@ -13,6 +13,7 @@ BITS_PER_BYTE = 8
 # ★ここにSFCのIPを書くだけでOK (マジックナンバー 257 は排除)
 SFC_SERVER_IP = "10.0.3.3"
 REGISTER_SIZE = 1024  # P4の定義に合わせる
+h2_IP="10.0.2.2"  # h2のIPアドレス
 
 # ---- 閾値設定 (Mbps) ----
 THRESHOLD_MBPS = 12.0
@@ -64,8 +65,9 @@ def main():
     global last_reset_time, current_level
 
     sfc_index = calculate_p4_index(SFC_SERVER_IP)
+    h2_index = calculate_p4_index(h2_IP)
 
-    print("[*] Register monitor started (Read-and-Reset Mode).")
+    print("[*] Register monitor started (Silent Mode).")
     print(f"[*] Interval: {INTERVAL}s")
     print(f"[*] Threshold: > {THRESHOLD_MBPS} Mbps")
     
@@ -77,8 +79,6 @@ def main():
 
     while True:
         # 1. 指定時間待つ
-        # (処理時間を考慮して、正確なスリープ時間を計算する必要はない。
-        #  「実際に経過した時間」で割り算すれば正確な速度が出るため)
         time.sleep(INTERVAL)
 
         # 2. 現在時刻を記録
@@ -97,25 +97,25 @@ def main():
         if time_delta < 0.1: continue # エラー防止
 
         # 全インデックスをチェック
-        # (今回はリセットするので、0以外の値が入っている＝この1秒間にパケットが来たということ)
         for idx, packet_count in current_counts.items():
             
-
-            # ==== ★追加: SFCのIndexなら計算も判定もスキップして次へ ====
+            # ==== SFCのIndexならスキップ ====
             if idx == sfc_index:
-                # 必要ならログ出す（デバッグ用)
-                print(f"[*] Ignoring SFC Server traffic (Index={idx})")
+                # ★修正: 毎回表示すると邪魔なのでコメントアウト
+                # print(f"[*] Ignoring SFC Server traffic (Index={idx})")
                 continue
-            # ========================================================
-
+            if idx == h2_index:
+                # ★修正: 毎回表示すると邪魔なのでコメントアウト
+                # print(f"[*] Ignoring h2 traffic (Index={idx})")
+                continue
 
             # 計算: (パケット数 / 経過時間) * サイズ * 8ビット / 1M
             pps = packet_count / time_delta
             mbps = (pps * AVG_PKT_BYTES * BITS_PER_BYTE) / 1_000_000.0
 
-            # ログ表示
-            if mbps > 0:
-                print(f"[.] Index={idx}: {mbps:.2f} Mbps (pps={pps:.1f}, time={time_delta:.2f}s)")
+            # ★修正: 毎回のMbps表示もコメントアウト (ここが処理を軽くするポイント)
+            # if mbps > 0:
+            #     print(f"[.] Index={idx}: {mbps:.2f} Mbps (pps={pps:.1f}, time={time_delta:.2f}s)")
 
             # ---- 判定ロジック ----
             new_level = 0
@@ -124,7 +124,7 @@ def main():
             else:
                 new_level = 0
 
-            # 状態変化時のみアクション
+            # 状態変化時のみアクション（ここは表示する）
             if new_level != current_level:
                 print(f"[!] STATUS CHANGE: {mbps:.2f} Mbps (Lv{current_level}->Lv{new_level})")
                 
