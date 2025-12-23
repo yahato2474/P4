@@ -7,16 +7,16 @@ import zlib
 INTERVAL = 1             # 監視間隔
 THRIFT_PORT = 9090         
 REGISTER_NAME = "MyIngress.test_counter"
-AVG_PKT_BYTES = 1500       # 1パケットあたりのバイト数
+AVG_PKT_BYTES = 1000       # 1パケットあたりのバイト数
 BITS_PER_BYTE = 8
 
-# ★ここにSFCのIPを書くだけでOK (マジックナンバー 257 は排除)
+# ★ここにSFCのIPを書ことでSFC後のトラフィックを無視する
 SFC_SERVER_IP = "10.0.3.3"
 REGISTER_SIZE = 1024  # P4の定義に合わせる
-h2_IP="10.0.2.2"  # h2のIPアドレス
+h2_IP="10.0.2.2"  # h2も測定のために無視
 
 # ---- 閾値設定 (Mbps) ----
-THRESHOLD_MBPS = 12.0
+THRESHOLD_MBPS = 10.0
 
 current_level = 0
 last_reset_time = time.time() # 最後にリセットした時刻

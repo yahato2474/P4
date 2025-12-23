@@ -4,7 +4,7 @@
 
 const bit<16> TYPE_IPV4 = 0x800;
 
-// 【重要】 色の値を定数として定義 (v1model標準: Green=0, Yellow=1, Red=2)
+
 const bit<32> METER_GREEN = 0;
 const bit<32> METER_YELLOW = 1;
 const bit<32> METER_RED = 2;

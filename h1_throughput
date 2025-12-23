@@ -2,7 +2,7 @@
 
 # =================設定=================
 TARGET_IP="10.0.6.6"   # h6 (Server) IP
-DURATION=30          # 1回あたりの秒数
+DURATION=10         # 1回あたりの秒数
 TRIALS=10            # 試行回数 (5~10推奨)
 OUTPUT_FILE="./result_h1/basic_h1_throughput.csv"
 # ======================================

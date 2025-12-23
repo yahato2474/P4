@@ -11,7 +11,7 @@ MY_IP = "10.0.3.3"
 MY_MAC_STR = "08:00:00:00:03:33"
 
 # 閾値 (Mbps)
-THRESHOLD_LB_MBPS   = 12.0
+THRESHOLD_LB_MBPS   = 0
 THRESHOLD_RL_MBPS   = 15.0
 THRESHOLD_DROP_MBPS = 18.0
 
@@ -77,7 +77,7 @@ def get_decision(src_ip, pkt_len):
     if mbps >= THRESHOLD_DROP_MBPS: return LEVEL_DROP, mbps
     if mbps >= THRESHOLD_RL_MBPS: return LEVEL_RL, mbps
     if mbps >= THRESHOLD_LB_MBPS: return LEVEL_LB, mbps
-    return LEVEL_LB, mbps
+    
 
 # ==========================================
 # メイン処理
