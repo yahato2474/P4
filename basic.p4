@@ -5,6 +5,8 @@
 const bit<16> TYPE_IPV4 = 0x800;
 
 
+
+
 const bit<32> METER_GREEN = 0;
 const bit<32> METER_YELLOW = 1;
 const bit<32> METER_RED = 2;
@@ -18,6 +20,8 @@ typedef bit<48> macAddr_t;
 typedef bit<32> ip4Addr_t;
 
 const bit<32> REGISTER_SIZE=1024;
+const ip4Addr_t CDN_4 = 0x0A000404;// 10.0.4.4
+const ip4Addr_t CDN_5 = 0x0A000505;// 10.0.5.5
 
 header ethernet_t {
     macAddr_t dstAddr;
@@ -124,7 +128,16 @@ control MyIngress(inout headers hdr,
             },
             max
         );
- }
+        }
+    
+    action rewrite_dstIP(){
+        if((meta.index & 1) == 0){
+            hdr.ipv4.dstAddr=CDN_4;
+        }else{
+            hdr.ipv4.dstAddr=CDN_5;
+        }
+
+    }
 
     action ipv4_forward(macAddr_t dstAddr, egressSpec_t port) {
         standard_metadata.egress_spec = port;
@@ -186,6 +199,7 @@ control MyIngress(inout headers hdr,
 
             if(hdr.ipv4.packet_level == 1){
                 // load balance
+                rewrite_dstIP();
             }
 
             if(hdr.ipv4.packet_level == 2){
@@ -198,6 +212,7 @@ control MyIngress(inout headers hdr,
                     return;
                 }
                 // 緑や黄色なら何もしない(通過) -> 下の ipv4_lpm へ
+                rewrite_dstIP();
             }
 
 
