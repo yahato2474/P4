@@ -12,13 +12,13 @@ MY_MAC_STR = "08:00:00:00:03:33"
 
 # 閾値 (Mbps)
 THRESHOLD_LB_MBPS   = 0
-THRESHOLD_RL_MBPS   = 5
-THRESHOLD_DROP_MBPS = 10
+THRESHOLD_RL_MBPS   = 20
+THRESHOLD_DROP_MBPS = 20
 
 TIME_WINDOW = 1.0
 
 # packet_level (TOS下位2bit)
-LEVEL_NORMAL = 0
+
 LEVEL_LB     = 1
 LEVEL_RL     = 2
 LEVEL_DROP   = 3
@@ -62,7 +62,7 @@ def get_decision(src_ip, pkt_len):
         return LEVEL_RL, mbps
     if mbps >= THRESHOLD_LB_MBPS:
         return LEVEL_LB, mbps
-    return LEVEL_NORMAL, mbps
+  
 
 # ==========================================
 # メイン
@@ -102,10 +102,10 @@ def main():
             level_history[src_ip] = level
 
         # DROP は SFC で破棄
-        """
+        
         if level == LEVEL_DROP:
             continue
-        """
+        
 
 
         mutable = bytearray(packet)

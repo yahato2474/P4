@@ -16,8 +16,8 @@ H2_IP = "10.0.2.2"
 REGISTER_SIZE = 1024 
 
 # ---- ★修正ポイント1: 閾値を2段階にする（ヒステリシス） ----
-THRESHOLD_HIGH = 6  # これを超えたら防御 ON
-THRESHOLD_LOW  = 4.0   # これを下回ったら防御 OFF
+THRESHOLD_HIGH = 8  # これを超えたら防御 ON
+THRESHOLD_LOW  = 6.0   # これを下回ったら防御 OFF
 
 # ---- ★修正ポイント2: 状態をインデックスごとに保存する辞書にする ----
 current_levels = {}     # {index: level}
