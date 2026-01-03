@@ -6,7 +6,7 @@ import zlib
 # ---- 設定 ----
 INTERVAL = 1             
 THRIFT_PORT = 9090         
-REGISTER_NAME = "MyIngress.test_counter"
+REGISTER_NAME = "MyIngress.packet_counter"
 AVG_PKT_BYTES = 1500  
 BITS_PER_BYTE = 8
 
@@ -16,7 +16,7 @@ H2_IP = "10.0.2.2"
 REGISTER_SIZE = 1024 
 
 # ---- ★修正ポイント1: 閾値を2段階にする（ヒステリシス） ----
-THRESHOLD_HIGH = 8  # これを超えたら防御 ON
+THRESHOLD_HIGH = 8.0  # これを超えたら防御 ON
 THRESHOLD_LOW  = 6.0   # これを下回ったら防御 OFF
 
 # ---- ★修正ポイント2: 状態をインデックスごとに保存する辞書にする ----
@@ -31,7 +31,7 @@ def execute_cli(cmd_str):
 def read_register():
     output = execute_cli(f"register_read {REGISTER_NAME}")
     register_values = {}
-    match = re.search(r'MyIngress\.test_counter\s*=\s*(.*)', output)
+    match = re.search(r'MyIngress\.packet_counter\s*=\s*(.*)', output)
     if match:
         values_str = match.group(1).strip()
         values = [v.strip() for v in values_str.split(',') if v.strip() != '']

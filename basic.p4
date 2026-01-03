@@ -102,7 +102,7 @@ control MyIngress(inout headers hdr,
     inout standard_metadata_t standard_metadata) {
 
 
-    register <bit<32>>(REGISTER_SIZE) test_counter;
+    register <bit<32>>(REGISTER_SIZE) packet_counter;
     meter(REGISTER_SIZE, MeterType.packets) my_meter;
 
     action drop() {
@@ -111,9 +111,9 @@ control MyIngress(inout headers hdr,
 
     action count_packet(){
         bit<32> value;
-        test_counter.read(value,meta.index); 
+        packet_counter.read(value,meta.index); 
         value=value+1;
-        test_counter.write(meta.index,value);
+        packet_counter.write(meta.index,value);
     }
 
     action calc_hash(){

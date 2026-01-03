@@ -19,16 +19,15 @@ P4INFO_PATH = 'build/basic.p4.p4info.txt'
 BMV2_JSON_PATH = 'build/basic.json'
 SWITCH_ADDRESS = '127.0.0.1:50051'
 DEVICE_ID = 0
-HOST_FILE_PATH = "./tmp/hosts.txt"
+HOST_FILE_PATH = "./tmp/hosts_test.txt"
 
 # SFCサーバ(h3)の情報
 DST_MAC_h3 = "08:00:00:00:03:33"
 DST_PORT_h3 = 3
 
 # Meter設定
-# この数値以上のパケット検知でdrop
-METER_RATE = 3
-METER_BURST = 3
+METER_RATE = 1 #660
+METER_BURST = 1 #660
 
 def lookup_ip_pair(index):
     if not os.path.exists(HOST_FILE_PATH):
@@ -46,13 +45,9 @@ def lookup_ip_pair(index):
                     continue
     return None,None
 
-# Helperを使わずに直接MeterEntryを作る関数
-def build_local_meter_entry(p4info_helper, meter_name, index, cir, cburst, pir, pburst):
+# エラー回避用の自作関数
+def build_meter_entry_direct(p4info_helper, meter_name, index, cir, cburst, pir, pburst):
     meter_entry = p4runtime_pb2.MeterEntry()
-    
-    # P4InfoからメーターのIDを取得
-    # get_meters_id ではなく get_id("meters", name) が一般的
-    # 環境によってメソッド名が違う可能性があるため、try-exceptで吸収
     try:
         meter_id = p4info_helper.get_meters_id(meter_name)
     except:
@@ -61,41 +56,32 @@ def build_local_meter_entry(p4info_helper, meter_name, index, cir, cburst, pir, 
     meter_entry.meter_id = meter_id
     meter_entry.index.index = index
     
-    # 設定値を入れる
     meter_entry.config.cir = cir
     meter_entry.config.cburst = cburst
     meter_entry.config.pir = pir
     meter_entry.config.pburst = pburst
-    
     return meter_entry
 
 def write_meter_entry(s1, p4info_helper, index):
-    """Level 1用のMeter設定を書き込む"""
-    
-    # 修正: 自作関数を使ってEntryを作成
-    meter_entry = build_local_meter_entry(
+    meter_entry = build_meter_entry_direct(
         p4info_helper,
         meter_name="MyIngress.my_meter",
         index=index,
         cir=METER_RATE, cburst=METER_BURST,
         pir=METER_RATE, pburst=METER_BURST
     )
-    
     request = p4runtime_pb2.WriteRequest()
     request.device_id = DEVICE_ID
     request.election_id.low = 1
     update = request.updates.add()
     update.type = p4runtime_pb2.Update.MODIFY
     update.entity.meter_entry.CopyFrom(meter_entry)
-    
     try:
         s1.client_stub.Write(request)
-        print(f"[+] Meter updated for index={index}")
     except grpc.RpcError as e:
         print(f"[!] Meter update failed: {e.details()}")
 
 def delete_redirect_rule(s1, p4info_helper, src_ip, dst_ip):
-    """ルール削除用の関数"""
     print(f"[*] Deleting rule for src={src_ip}")
     
     table_entry = p4info_helper.buildTableEntry(
@@ -123,12 +109,11 @@ def delete_redirect_rule(s1, p4info_helper, src_ip, dst_ip):
         s1.client_stub.Write(request)
         print(f"[+] Rule Deleted successfully.")
     except grpc.RpcError as e:
-        print(f"[!] Delete failed (maybe already deleted): {e.details()}")
-
+        print(f"[!] Delete failed: {e.details()}")
 
 def insert_redirect_rule(src_ip, dst_ip, index, level):
     if not os.path.exists(P4INFO_PATH):
-        print(f"[!] p4info file not found: {P4INFO_PATH}")
+        print(f"[!] p4info file not found.")
         sys.exit(1)
     p4info_helper = P4InfoHelper(P4INFO_PATH)
 
@@ -146,26 +131,25 @@ def insert_redirect_rule(src_ip, dst_ip, index, level):
         ShutdownAllSwitchConnections()
         sys.exit(1)
 
-    # ★Level 0なら削除処理へ
+    # Level 0なら削除
     if level == 0:
         delete_redirect_rule(s1, p4info_helper, src_ip, dst_ip)
         ShutdownAllSwitchConnections()
         return
 
-    # --- 以下は追加・更新処理 (Level > 0) ---
-
+    # 追加・更新
     print(f"[*] Redirecting src={src_ip} to SFC (Tag Level={level})")
 
-    # 1. Meter設定 (エラー回避のため自作関数経由)
+    # Meter設定
     write_meter_entry(s1, p4info_helper, index)
           
-    # 2. リダイレクトルールの作成
+    # リダイレクトルール
     table_entry = p4info_helper.buildTableEntry(
         table_name="MyIngress.redirect_table",
         match_fields={
             "hdr.ipv4.srcAddr": src_ip,
             "hdr.ipv4.dstAddr": dst_ip,
-            "hdr.ipv4.packet_level": 0 #TOS値
+            "hdr.ipv4.packet_level": 0
         },
         action_name="MyIngress.ipv4_forward",
         action_params={
@@ -178,8 +162,6 @@ def insert_redirect_rule(src_ip, dst_ip, index, level):
     request.device_id = DEVICE_ID 
     request.election_id.low = 1  
     update = request.updates.add()   
-    
-    # 簡易的にINSERT -> 失敗ならMODIFY
     update.type = p4runtime_pb2.Update.INSERT 
     update.entity.table_entry.CopyFrom(table_entry)
 
@@ -187,7 +169,7 @@ def insert_redirect_rule(src_ip, dst_ip, index, level):
         s1.client_stub.Write(request) 
         print(f"[+] Rule Inserted: Level {level}")
     except grpc.RpcError as e:
-        # INSERT失敗 -> MODIFYへ切り替え
+        # INSERT失敗ならMODIFY
         request = p4runtime_pb2.WriteRequest() 
         request.device_id = DEVICE_ID 
         request.election_id.low = 1
